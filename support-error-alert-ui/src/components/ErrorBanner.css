@@ -1,0 +1,35 @@
+.error-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  background: var(--danger-soft);
+  border: 1px solid rgba(198, 40, 40, 0.25);
+  color: #991b1b;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.error-banner__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.error-banner__dismiss {
+  flex-shrink: 0;
+  padding: 0 0.4rem;
+  min-width: 2rem;
+  line-height: 1.2;
+  font-size: 1.25rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.error-banner__dismiss:hover {
+  background: rgba(153, 27, 27, 0.08);
+}
