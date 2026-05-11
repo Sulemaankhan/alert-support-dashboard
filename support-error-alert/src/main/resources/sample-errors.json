@@ -1,0 +1,18 @@
+{
+  "serviceName": "payment-gateway",
+  "errors": [
+    {
+      "message": "NullPointerException when parsing payload",
+      "filePath": "src/main/java/com/acme/payment/PaymentParser.java",
+      "functionPath": "com.acme.payment.PaymentParser.parse(PaymentParser.java:112)",
+      "severity": "HIGH",
+      "status": "OPEN"
+    },
+    {
+      "error": "Timeout contacting upstream",
+      "path": "src/main/java/com/acme/payment/UpstreamClient.java",
+      "method": "UpstreamClient.fetchBalances",
+      "severity": "MEDIUM"
+    }
+  ]
+}
