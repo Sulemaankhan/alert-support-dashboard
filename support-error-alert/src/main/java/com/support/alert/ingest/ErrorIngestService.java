@@ -27,8 +27,7 @@ public class ErrorIngestService {
     }
 
     /**
-     * Parses JSON into alert rows. Jira batch ids (one per four error-detail rows by global arrival order)
-     * are applied in {@link InMemoryAlertStore#addAll}.
+     * Parses JSON into alert rows. Jira issue keys are empty until created via the dashboard API.
      */
     public List<AlertRecord> parseAlertsFromJson(String rawJson) {
         try {

@@ -2,11 +2,14 @@ package com.support.alert.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.support.alert.ingest.ErrorIngestService;
+import com.support.alert.jira.JiraIssueCreateService;
+import com.support.alert.jira.JiraIssueCreateService.CreatedJiraIssue;
 import com.support.alert.model.AlertRecord;
 import com.support.alert.model.AlertStatus;
 import com.support.alert.store.InMemoryAlertStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -18,8 +21,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @RestController
@@ -31,10 +36,15 @@ public class AlertController {
 
     private final ErrorIngestService ingestService;
     private final InMemoryAlertStore alertStore;
+    private final JiraIssueCreateService jiraIssueCreateService;
 
-    public AlertController(ErrorIngestService ingestService, InMemoryAlertStore alertStore) {
+    public AlertController(
+            ErrorIngestService ingestService,
+            InMemoryAlertStore alertStore,
+            JiraIssueCreateService jiraIssueCreateService) {
         this.ingestService = ingestService;
         this.alertStore = alertStore;
+        this.jiraIssueCreateService = jiraIssueCreateService;
     }
 
     @GetMapping
@@ -88,5 +98,57 @@ public class AlertController {
             log.warn("PUT /api/alerts/{}/status - invalid status: {}", id, statusRaw);
             return ResponseEntity.badRequest().build();
         }
+    }
+
+    /**
+     * Creates a Jira issue from this alert: {@link AlertRecord#getErrorDetails()} as description,
+     * {@link com.support.alert.model.AlertSeverity} mapped to Jira priority.
+     * Optional JSON body: {@code { "summary": "override title" }}.
+     */
+    @PostMapping("/{id}/jira/issue")
+    public ResponseEntity<Map<String, Object>> createJiraIssue(
+            @PathVariable UUID id,
+            @RequestBody(required = false) JsonNode body) {
+        Optional<AlertRecord> alertOpt = alertStore.findById(id);
+        if (alertOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        AlertRecord alert = alertOpt.get();
+        if (!alert.getJiraIssueKeys().isEmpty()) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(Map.of("error", "This alert already has a linked Jira issue."));
+        }
+        Map<String, String> overrides = Map.of();
+        if (body != null && body.isObject()) {
+            String summary = textField(body, "summary");
+            if (summary != null) {
+                overrides = Map.of("summary", summary);
+            }
+        }
+        try {
+            CreatedJiraIssue created = jiraIssueCreateService.createIssue(alert, overrides);
+            return alertStore.attachJiraIssue(id, created.getIssueKey())
+                    .map(updated -> {
+                        Map<String, Object> payload = new LinkedHashMap<>();
+                        payload.put("issueKey", created.getIssueKey());
+                        payload.put("issueSelf", created.getIssueSelf());
+                        payload.put("alert", updated);
+                        return ResponseEntity.ok(payload);
+                    })
+                    .orElseGet(() -> ResponseEntity.notFound().build());
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Map.of("error", ex.getMessage()));
+        }
+    }
+
+    private static String textField(JsonNode node, String field) {
+        JsonNode v = node.get(field);
+        if (v == null || v.isNull() || !v.isTextual()) {
+            return null;
+        }
+        String s = v.asText().trim();
+        return s.isEmpty() ? null : s;
     }
 }

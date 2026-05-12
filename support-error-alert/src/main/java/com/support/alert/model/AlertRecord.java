@@ -89,7 +89,7 @@ public class AlertRecord {
     }
 
     /**
-     * Same alert row with Jira fields replaced (used to assign one batch per group of four ingested errors).
+     * Same alert row with Jira fields replaced after creating/linking an issue.
      */
     public AlertRecord withJiraAssignment(String jiraBatchId, List<String> jiraIssueKeys) {
         return new AlertRecord(

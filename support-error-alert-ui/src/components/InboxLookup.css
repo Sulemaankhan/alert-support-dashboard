@@ -1,0 +1,137 @@
+.inbox-lookup {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem 1.35rem 1.35rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 1px 2px rgba(28, 33, 40, 0.05);
+  scroll-margin-top: 4.5rem;
+}
+
+.inbox-lookup__head {
+  margin-bottom: 1rem;
+}
+
+.inbox-lookup__title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.inbox-lookup__sub {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  max-width: 52rem;
+  line-height: 1.45;
+}
+
+.inbox-lookup__form {
+  margin-bottom: 0.75rem;
+}
+
+.inbox-lookup__label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.inbox-lookup__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.inbox-lookup__input {
+  flex: 1 1 220px;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+.inbox-lookup__input:focus {
+  outline: 2px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 1px;
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.inbox-lookup__banner {
+  font-size: 0.875rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  margin-top: 0.5rem;
+  line-height: 1.45;
+}
+
+.inbox-lookup__banner--error {
+  background: var(--danger-soft);
+  border: 1px solid rgba(198, 40, 40, 0.25);
+  color: #7f1d1d;
+}
+
+.inbox-lookup__banner--info {
+  background: var(--accent-soft);
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  color: var(--text);
+}
+
+.inbox-lookup__empty {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.inbox-lookup__table-wrap {
+  margin-top: 0.75rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.inbox-lookup__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.inbox-lookup__table th,
+.inbox-lookup__table td {
+  padding: 0.55rem 0.65rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.inbox-lookup__table th {
+  background: var(--surface-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.inbox-lookup__table tr:last-child td {
+  border-bottom: none;
+}
+
+.inbox-lookup__cell-subject {
+  font-weight: 500;
+  max-width: 14rem;
+}
+
+.inbox-lookup__cell-nowrap {
+  white-space: nowrap;
+}
+
+.inbox-lookup__cell-preview {
+  color: var(--muted);
+  max-width: 28rem;
+}

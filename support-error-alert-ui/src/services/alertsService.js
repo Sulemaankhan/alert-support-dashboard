@@ -38,3 +38,26 @@ export async function updateAlertStatus(alertId, status) {
   });
   return res.json();
 }
+
+/**
+ * @returns {Promise<{ enabled: boolean, configured: boolean, siteUrl: string }>}
+ */
+export async function fetchJiraStatus() {
+  const res = await request('/api/jira/status');
+  return res.json();
+}
+
+/**
+ * Creates a Jira issue from the alert (server uses error details as description, severity as priority).
+ * @param {string} alertId
+ * @param {Record<string, string>} [body] - optional `{ summary: '...' }`
+ * @returns {Promise<{ issueKey: string, issueSelf: string, alert: import('../types/alerts').Alert }>}
+ */
+export async function createJiraIssueForAlert(alertId, body = {}) {
+  const res = await request(`/api/alerts/${alertId}/jira/issue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}

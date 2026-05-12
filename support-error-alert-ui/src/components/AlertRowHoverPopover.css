@@ -1,0 +1,94 @@
+.alert-row-hover {
+  position: fixed;
+  z-index: 200;
+  box-sizing: border-box;
+  min-width: min(22rem, calc(100vw - 1.5rem));
+  max-width: min(36rem, calc(100vw - 1.5rem));
+  max-height: min(42vh, 22rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow:
+    0 4px 6px -1px rgba(28, 33, 40, 0.08),
+    0 10px 24px -4px rgba(28, 33, 40, 0.12);
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.alert-row-hover__head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.alert-row-hover__hint {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--accent);
+  font-size: 0.7rem;
+}
+
+.alert-row-hover__body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 0.65rem 0.75rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.alert-row-hover__meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  margin-bottom: 0.65rem;
+  font-size: 0.78rem;
+}
+
+.alert-row-hover__meta dt {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.alert-row-hover__meta dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.alert-row-hover__details-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.alert-row-hover__pre {
+  margin: 0;
+  padding: 0.5rem 0.55rem;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 12rem;
+  overflow: auto;
+}

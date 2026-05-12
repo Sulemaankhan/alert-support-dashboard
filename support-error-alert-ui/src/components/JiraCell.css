@@ -1,5 +1,5 @@
 .alerts-table__jira {
-  max-width: 11rem;
+  max-width: 13rem;
   vertical-align: top;
 }
 
@@ -9,36 +9,39 @@
   gap: 0.35rem;
 }
 
-.jira-cell__batch {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 2.75rem;
-  padding: 0.2rem 0.45rem;
-  font-weight: 700;
-  font-size: 0.8125rem;
-  letter-spacing: 0.06em;
-  color: var(--text);
-  background: var(--surface-muted);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-variant-numeric: tabular-nums;
+.jira-cell__issues--plain {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
 }
 
-.jira-cell__issues {
-  margin: 0;
-  padding: 0 0 0 1rem;
-  font-size: 0.72rem;
-  line-height: 1.35;
-  color: var(--muted);
+.jira-cell__link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.jira-cell__link:hover {
+  text-decoration: underline;
+}
+
+.jira-cell--actions {
+  gap: 0.4rem;
+}
+
+.jira-cell__create {
+  font-size: 0.75rem;
+  padding: 0.35rem 0.65rem;
+  white-space: nowrap;
+}
+
+.jira-cell__hint {
+  font-size: 0.68rem;
+  display: block;
 }
 
 .jira-cell__issues li {
   margin: 0.1rem 0;
-}
-
-.jira-cell__empty {
-  font-size: 0.72rem;
 }
 
 .jira-cell .muted {

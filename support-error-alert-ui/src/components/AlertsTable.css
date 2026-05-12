@@ -46,6 +46,10 @@
   background: var(--surface-hover);
 }
 
+.alerts-table__tr--hover-active td {
+  background: var(--accent-soft);
+}
+
 .alerts-table__mono {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 0.78rem;

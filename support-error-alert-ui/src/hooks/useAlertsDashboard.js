@@ -13,6 +13,8 @@ export function useAlertsDashboard() {
   const [loading, setLoading] = useState(true);
   const [mutationBusy, setMutationBusy] = useState(false);
   const [error, setError] = useState(/** @type {string | null} */ (null));
+  const [jiraConfigured, setJiraConfigured] = useState(false);
+  const [jiraSiteUrl, setJiraSiteUrl] = useState('');
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -20,6 +22,22 @@ export function useAlertsDashboard() {
     return () => {
       mounted.current = false;
     };
+  }, []);
+
+  const loadJiraStatus = useCallback(async () => {
+    try {
+      const s = await alertsService.fetchJiraStatus();
+      if (mounted.current) {
+        setJiraConfigured(Boolean(s.configured && s.enabled));
+        const u = typeof s.siteUrl === 'string' ? s.siteUrl.trim().replace(/\/$/, '') : '';
+        setJiraSiteUrl(u);
+      }
+    } catch {
+      if (mounted.current) {
+        setJiraConfigured(false);
+        setJiraSiteUrl('');
+      }
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -30,12 +48,13 @@ export function useAlertsDashboard() {
         setAlerts(data);
         setError(null);
       }
+      await loadJiraStatus();
     } catch (e) {
       if (mounted.current) setError(formatError(e));
     } finally {
       if (mounted.current) setLoading(false);
     }
-  }, []);
+  }, [loadJiraStatus]);
 
   useEffect(() => {
     refresh();
@@ -98,15 +117,34 @@ export function useAlertsDashboard() {
     }
   }, [refresh]);
 
+  const createJiraIssue = useCallback(
+    async (/** @type {string} */ alertId, /** @type {Record<string, string>} */ payload = {}) => {
+      setMutationBusy(true);
+      setError(null);
+      try {
+        await alertsService.createJiraIssueForAlert(alertId, payload);
+        await refresh();
+      } catch (e) {
+        if (mounted.current) setError(formatError(e));
+      } finally {
+        if (mounted.current) setMutationBusy(false);
+      }
+    },
+    [refresh]
+  );
+
   return {
     alerts,
     loading,
     error,
     mutationBusy,
+    jiraConfigured,
+    jiraSiteUrl,
     refresh,
     ingestFromFile,
     updateStatus,
     clearIngestedAlerts,
+    createJiraIssue,
     dismissError,
   };
 }
