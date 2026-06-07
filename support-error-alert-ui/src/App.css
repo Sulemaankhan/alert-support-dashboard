@@ -1,6 +1,25 @@
+.app-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell .app {
+  flex: 1;
+}
+
 .app {
   max-width: 1400px;
   margin: 0 auto;
   padding: 2rem 1.5rem 3rem;
   scroll-margin-top: 4.5rem;
+  width: 100%;
 }

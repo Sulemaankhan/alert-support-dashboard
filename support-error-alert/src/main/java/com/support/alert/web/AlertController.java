@@ -1,6 +1,8 @@
 package com.support.alert.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.support.alert.email.InboxMessageDto;
+import com.support.alert.ingest.EmailAlertIngestService;
 import com.support.alert.ingest.ErrorIngestService;
 import com.support.alert.jira.JiraIssueCreateService;
 import com.support.alert.jira.JiraIssueCreateService.CreatedJiraIssue;
@@ -11,7 +13,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,20 +30,22 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/alerts")
-@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000"})
 public class AlertController {
 
     private static final Logger log = LoggerFactory.getLogger(AlertController.class);
 
     private final ErrorIngestService ingestService;
+    private final EmailAlertIngestService emailIngestService;
     private final InMemoryAlertStore alertStore;
     private final JiraIssueCreateService jiraIssueCreateService;
 
     public AlertController(
             ErrorIngestService ingestService,
+            EmailAlertIngestService emailIngestService,
             InMemoryAlertStore alertStore,
             JiraIssueCreateService jiraIssueCreateService) {
         this.ingestService = ingestService;
+        this.emailIngestService = emailIngestService;
         this.alertStore = alertStore;
         this.jiraIssueCreateService = jiraIssueCreateService;
     }
@@ -69,9 +72,36 @@ public class AlertController {
             return ResponseEntity.badRequest().build();
         }
         List<AlertRecord> parsed = ingestService.parseAlertsFromJson(body);
-        alertStore.addAll(parsed);
-        log.info("POST /api/alerts/ingest - stored {} new alert(s)", parsed.size());
-        return ResponseEntity.ok(parsed);
+        if (parsed.isEmpty()) {
+            log.warn("POST /api/alerts/ingest - no alerts in JSON");
+            return ResponseEntity.badRequest().build();
+        }
+        if (parsed.size() > 1) {
+            log.info("POST /api/alerts/ingest - JSON had {} alert(s); keeping only the first", parsed.size());
+        }
+        AlertRecord single = parsed.get(0);
+        alertStore.replaceWithSingle(single);
+        log.info("POST /api/alerts/ingest - active alert from JSON (id={})", single.getId());
+        return ResponseEntity.ok(List.of(single));
+    }
+
+    /**
+     * Replaces the active alert with one built from an inbox email row (mutually exclusive with JSON ingest).
+     */
+    @PostMapping("/ingest/email")
+    public ResponseEntity<AlertRecord> ingestFromEmail(@RequestBody InboxMessageDto message) {
+        if (message == null) {
+            return ResponseEntity.badRequest().build();
+        }
+        try {
+            AlertRecord record = emailIngestService.toAlert(message);
+            alertStore.replaceWithSingle(record);
+            log.info("POST /api/alerts/ingest/email - active alert from email (id={})", record.getId());
+            return ResponseEntity.ok(record);
+        } catch (IllegalArgumentException ex) {
+            log.warn("POST /api/alerts/ingest/email - rejected: {}", ex.getMessage());
+            return ResponseEntity.badRequest().build();
+        }
     }
 
     @PutMapping("/{id}/status")

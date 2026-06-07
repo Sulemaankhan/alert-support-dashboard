@@ -7,6 +7,7 @@ import './JsonFileUpload.css';
  * @param {string} [props.label]
  * @param {string} [props.className] - merged onto the label (e.g. variant class)
  * @param {boolean} [props.disabled]
+ * @param {string} [props.title]
  */
 export function JsonFileUpload({
   onFileSelected,
@@ -14,6 +15,7 @@ export function JsonFileUpload({
   label = 'Upload JSON',
   className = '',
   disabled = false,
+  title,
 }) {
   const handleChange = async (e) => {
     if (disabled) return;
@@ -25,7 +27,7 @@ export function JsonFileUpload({
 
   const labelClass = ['json-upload', className].filter(Boolean).join(' ');
   return (
-    <label className={labelClass} aria-disabled={disabled}>
+    <label className={labelClass} aria-disabled={disabled} title={title}>
       <input
         type="file"
         accept={accept}

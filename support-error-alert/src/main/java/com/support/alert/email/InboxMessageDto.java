@@ -1,5 +1,6 @@
 package com.support.alert.email;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -17,7 +18,7 @@ public final class InboxMessageDto {
     public InboxMessageDto(
             @JsonProperty("messageId") String messageId,
             @JsonProperty("subject") String subject,
-            @JsonProperty("from") String from,
+            @JsonProperty("from") @JsonAlias({"From", "sender"}) String from,
             @JsonProperty("sentAt") String sentAt,
             @JsonProperty("preview") String preview) {
         this.messageId = messageId;

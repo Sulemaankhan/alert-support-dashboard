@@ -19,12 +19,46 @@
   gap: 0.75rem 1.25rem;
 }
 
+.site-header__right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+}
+
+.site-header__user {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.site-header__email {
+  font-size: 0.8rem;
+  color: var(--muted);
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-header__sign-out {
+  font-size: 0.8rem;
+  padding: 0.35rem 0.65rem;
+}
+
 .site-header__brand {
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 1.05rem;
   color: var(--text);
   text-decoration: none;
+  line-height: 1.25;
+  max-width: min(100%, 28rem);
+}
+
+.site-header__brand-text {
+  min-width: 0;
 }
 
 .site-header__brand:hover {
@@ -64,25 +98,9 @@
   outline-offset: 2px;
 }
 
-.site-header__load-json {
-  display: flex;
-  align-items: center;
-  scroll-margin-top: 4.5rem;
-}
-
-/* Load JSON control in nav: align with nav links (dashed upload affordance toned down). */
-.site-header .json-upload--in-header {
-  padding: 0.4rem 0.75rem;
-  border-style: solid;
-  border-color: var(--border);
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 0.875rem;
-  margin: 0;
-}
-
-.site-header .json-upload--in-header:hover:not(:has(input:disabled)) {
+.site-header__nav-link--active {
   color: var(--text);
-  background: var(--surface-hover);
-  border-color: var(--border-strong);
+  background: var(--accent-soft);
+  border-color: rgba(37, 99, 235, 0.25);
 }
+

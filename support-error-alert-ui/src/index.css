@@ -2,6 +2,13 @@ html {
   scroll-behavior: smooth;
 }
 
+.app-name {
+  font-family: 'Syne', 'DM Sans', system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
 :root {
   color-scheme: light;
   --bg: #f0f2f5;

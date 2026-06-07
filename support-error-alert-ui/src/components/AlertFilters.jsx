@@ -16,11 +16,12 @@ const ALL = 'ALL';
  * @param {function(string): void} props.onJiraChange
  * @param {function(): void} [props.onClearFilters]
  * @param {boolean} [props.hasActiveFilters]
- * @param {function(): void} props.onClearJson
+ * @param {function(): void} props.onClear
  * @param {function(): void} props.onRefresh
  * @param {boolean} props.loading
  * @param {boolean} props.actionsBusy
- * @param {boolean} props.canClearJson
+ * @param {boolean} props.canClear
+ * @param {string} props.clearLabel
  */
 export function AlertFilters({
   showFilterFields = true,
@@ -33,11 +34,12 @@ export function AlertFilters({
   onJiraChange,
   onClearFilters,
   hasActiveFilters,
-  onClearJson,
+  onClear,
   onRefresh,
   loading,
   actionsBusy,
-  canClearJson,
+  canClear,
+  clearLabel,
 }) {
   const busy = loading || actionsBusy;
   const rootClass = [
@@ -48,7 +50,7 @@ export function AlertFilters({
     .join(' ');
 
   return (
-    <div className={rootClass} aria-label={showFilterFields ? 'Filter alerts' : 'Alert actions'}>
+    <div className={rootClass} aria-label={showFilterFields ? `Filter ${clearLabel}` : `${clearLabel} actions`}>
       {showFilterFields ? (
         <>
           <div className="alert-filters__field">
@@ -115,8 +117,8 @@ export function AlertFilters({
               </button>
             ) : null}
             <div className="alert-filters__actions">
-              <button type="button" className="btn btn--danger" onClick={onClearJson} disabled={!canClearJson || busy}>
-                Clear JSON
+              <button type="button" className="btn btn--danger" onClick={onClear} disabled={!canClear || busy}>
+                {clearLabel}
               </button>
               <button type="button" className="btn btn--primary" onClick={onRefresh} disabled={loading}>
                 {loading ? 'Refreshing…' : 'Refresh'}
@@ -126,8 +128,8 @@ export function AlertFilters({
         </>
       ) : (
         <div className="alert-filters__actions">
-          <button type="button" className="btn btn--danger" onClick={onClearJson} disabled={!canClearJson || busy}>
-            Clear JSON
+          <button type="button" className="btn btn--danger" onClick={onClear} disabled={!canClear || busy}>
+            {clearLabel}
           </button>
           <button type="button" className="btn btn--primary" onClick={onRefresh} disabled={loading}>
             {loading ? 'Refreshing…' : 'Refresh'}

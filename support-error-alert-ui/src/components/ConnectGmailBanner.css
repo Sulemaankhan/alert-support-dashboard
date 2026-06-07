@@ -1,0 +1,36 @@
+.connect-gmail {
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 8px;
+  border: 1px solid rgba(37, 99, 235, 0.35);
+  background: var(--accent-soft, #eff6ff);
+}
+
+.connect-gmail--info {
+  border-color: var(--border, #e2e6ed);
+  background: var(--surface-muted, #f5f6f8);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.connect-gmail__text {
+  margin: 0 0 0.65rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.connect-gmail__btn {
+  font-size: 0.875rem;
+}
+
+.connect-gmail__ok {
+  margin: 0.65rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.connect-gmail__err {
+  margin: 0.65rem 0 0;
+  font-size: 0.85rem;
+  color: #7f1d1d;
+}

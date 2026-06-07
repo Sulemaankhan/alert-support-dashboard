@@ -33,11 +33,13 @@ public final class InboxSearchResponse {
     }
 
     public static InboxSearchResponse notConfigured(String subject) {
-        return new InboxSearchResponse(
-                STATUS_DISABLED,
+        return notConfigured(
                 subject,
-                Collections.emptyList(),
-                "IMAP is enabled but host or username is missing. Check support.email.imap.* properties.");
+                "IMAP is enabled but host, username, or password is missing. Check support.email.imap.* in application-local.properties.");
+    }
+
+    public static InboxSearchResponse notConfigured(String subject, String detail) {
+        return new InboxSearchResponse(STATUS_DISABLED, subject, Collections.emptyList(), detail);
     }
 
     public static InboxSearchResponse ok(String subject, List<InboxMessageDto> messages) {

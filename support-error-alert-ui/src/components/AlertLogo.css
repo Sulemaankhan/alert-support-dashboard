@@ -1,0 +1,39 @@
+.alert-logo {
+  display: inline-flex;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.alert-logo svg {
+  display: block;
+}
+
+.alert-logo--sm svg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.alert-logo--md svg {
+  width: 2rem;
+  height: 2rem;
+}
+
+.alert-logo--lg svg {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.alert-logo__bg {
+  fill: var(--accent-soft);
+}
+
+.alert-logo__triangle {
+  fill: #fef2f2;
+  stroke: var(--danger);
+}
+
+.alert-logo__mark,
+.alert-logo__dot {
+  fill: var(--danger);
+  stroke: var(--danger);
+}

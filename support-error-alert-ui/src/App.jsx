@@ -1,47 +1,23 @@
-import { AlertsTable } from './components/AlertsTable.jsx';
-import { ErrorBanner } from './components/ErrorBanner.jsx';
-import { InboxLookup } from './components/InboxLookup.jsx';
-import { SiteHeader } from './components/SiteHeader.jsx';
-import { NAV_SECTION } from './constants/nav.js';
-import { useAlertsDashboard } from './hooks/useAlertsDashboard.js';
+import { Dashboard } from './components/Dashboard.jsx';
+import { LoginPage } from './components/LoginPage.jsx';
+import { useAuth } from './hooks/useAuth.jsx';
 import './styles/buttons.css';
 import './App.css';
 
 export default function App() {
-  const {
-    alerts,
-    loading,
-    error,
-    mutationBusy,
-    jiraConfigured,
-    jiraSiteUrl,
-    refresh,
-    ingestFromFile,
-    updateStatus,
-    clearIngestedAlerts,
-    createJiraIssue,
-    dismissError,
-  } = useAlertsDashboard();
+  const { user, loading } = useAuth();
 
-  return (
-    <>
-      <SiteHeader onJsonSelected={ingestFromFile} jsonBusy={loading || mutationBusy} />
-      <div className="app" id={NAV_SECTION.HOME}>
-        <ErrorBanner message={error} onDismiss={dismissError} />
-        <InboxLookup />
-        <AlertsTable
-          alerts={alerts}
-          loading={loading}
-          rowActionsBusy={mutationBusy}
-          onStatusChange={updateStatus}
-          onClearJson={clearIngestedAlerts}
-          onRefresh={refresh}
-          canClearJson={alerts.length > 0}
-          jiraConfigured={jiraConfigured}
-          jiraSiteUrl={jiraSiteUrl}
-          onCreateJiraIssue={createJiraIssue}
-        />
+  if (loading) {
+    return (
+      <div className="app-loading" role="status">
+        Loading…
       </div>
-    </>
-  );
+    );
+  }
+
+  if (!user) {
+    return <LoginPage />;
+  }
+
+  return <Dashboard />;
 }

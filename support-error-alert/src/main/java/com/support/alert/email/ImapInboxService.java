@@ -33,31 +33,119 @@ public class ImapInboxService {
         this.props = props;
     }
 
-    public InboxSearchResponse searchBySubject(String subject) {
-        if (!props.isEnabled()) {
-            return InboxSearchResponse.disabled(subject);
+    public InboxSearchResponse searchBySubject(InboxSearchRequest request, String signedInEmail, String googleAccessToken) {
+        if (request == null) {
+            return InboxSearchResponse.error("", "Request body is required.");
         }
-        if (!props.isRunnable()) {
-            return InboxSearchResponse.notConfigured(subject);
+        String subject = request.getSubject() != null ? request.getSubject().trim() : "";
+        if (subject.isEmpty()) {
+            return InboxSearchResponse.error("", "Subject is required.");
+        }
+        String email = request.getEmail() != null ? request.getEmail().trim().toLowerCase() : "";
+        String password = request.getPassword() != null ? request.getPassword() : "";
+        if (email.isEmpty()) {
+            return InboxSearchResponse.error(subject, "Email address is required.");
         }
 
+        if (password.isBlank()) {
+            if (signedInEmail == null || signedInEmail.isBlank()) {
+                return InboxSearchResponse.error(
+                        subject,
+                        "Sign in with Google first, then search inbox without a password.");
+            }
+            if (!signedInEmail.equalsIgnoreCase(email)) {
+                return InboxSearchResponse.error(
+                        subject,
+                        "Use the same email you signed in with (" + signedInEmail + ").");
+            }
+            if (googleAccessToken == null || googleAccessToken.isBlank()) {
+                return InboxSearchResponse.error(
+                        subject,
+                        "Gmail access expired or was not granted. Sign out, sign in with Google again, "
+                                + "and allow Gmail access when prompted.");
+            }
+            ImapSessionConfig session = resolveOAuthSession(request, email, googleAccessToken);
+            return searchWithSession(subject, session);
+        }
+
+        ImapSessionConfig session = resolveSession(request, email, password);
+        return searchWithSession(subject, session);
+    }
+
+    private ImapSessionConfig resolveOAuthSession(InboxSearchRequest request, String email, String accessToken) {
+        String host = resolveHost(request, email);
+        int port = resolvePort(request);
+        String folder = props.getFolder() != null && !props.getFolder().isBlank() ? props.getFolder() : "INBOX";
+        int maxResults = props.getMaxResults() > 0 ? props.getMaxResults() : 50;
+        return new ImapSessionConfig(host, port, email, folder, maxResults, accessToken);
+    }
+
+    private ImapSessionConfig resolveSession(InboxSearchRequest request, String email, String password) {
+        String host = resolveHost(request, email);
+        int port = resolvePort(request);
+        String folder = props.getFolder() != null && !props.getFolder().isBlank() ? props.getFolder() : "INBOX";
+        int maxResults = props.getMaxResults() > 0 ? props.getMaxResults() : 50;
+        return new ImapSessionConfig(host, port, email, password, folder, maxResults);
+    }
+
+    private String resolveHost(InboxSearchRequest request, String email) {
+        String host = request.getHost() != null ? request.getHost().trim() : "";
+        if (host.isEmpty()) {
+            host = defaultHostForEmail(email);
+        }
+        return host;
+    }
+
+    private int resolvePort(InboxSearchRequest request) {
+        int port = request.getPort() != null && request.getPort() > 0 ? request.getPort() : props.getPort();
+        if (port <= 0) {
+            port = 993;
+        }
+        return port;
+    }
+
+    private static String defaultHostForEmail(String email) {
+        String lower = email.toLowerCase();
+        if (lower.endsWith("@gmail.com") || lower.endsWith("@googlemail.com")) {
+            return "imap.gmail.com";
+        }
+        if (lower.endsWith("@outlook.com") || lower.endsWith("@hotmail.com") || lower.endsWith("@live.com")) {
+            return "outlook.office365.com";
+        }
+        if (lower.endsWith("@yahoo.com")) {
+            return "imap.mail.yahoo.com";
+        }
+        return "imap.gmail.com";
+    }
+
+    private InboxSearchResponse searchWithSession(String subject, ImapSessionConfig session) {
         Properties mailProps = new Properties();
         mailProps.put("mail.store.protocol", "imaps");
-        mailProps.put("mail.imaps.host", props.getHost());
-        mailProps.put("mail.imaps.port", String.valueOf(props.getPort()));
+        mailProps.put("mail.imaps.host", session.getHost());
+        mailProps.put("mail.imaps.port", String.valueOf(session.getPort()));
         mailProps.put("mail.imaps.ssl.enable", "true");
+        if (session.isOauth2()) {
+            // Jakarta Mail: pass the OAuth access token as the "password" with only XOAUTH2 enabled.
+            mailProps.put("mail.imaps.auth.mechanisms", "XOAUTH2");
+            mailProps.put("mail.imaps.auth.login.disable", "true");
+            mailProps.put("mail.imaps.auth.plain.disable", "true");
+        }
 
-        Session session = Session.getInstance(mailProps);
-        session.setDebug(false);
+        Session mailSession = Session.getInstance(mailProps);
+        mailSession.setDebug(false);
 
         Store store = null;
         Folder folder = null;
         try {
-            store = session.getStore("imaps");
-            store.connect(props.getHost(), props.getUsername(), props.getPassword());
-            folder = store.getFolder(props.getFolder());
+            store = mailSession.getStore("imaps");
+            if (session.isOauth2()) {
+                store.connect(session.getHost(), session.getUsername(), session.getOauth2AccessToken());
+            } else {
+                store.connect(session.getHost(), session.getUsername(), session.getPassword());
+            }
+            folder = store.getFolder(session.getFolder());
             if (folder == null || !folder.exists()) {
-                return InboxSearchResponse.error(subject, "Mail folder not found: " + props.getFolder());
+                return InboxSearchResponse.error(subject, "Mail folder not found: " + session.getFolder());
             }
             folder.open(Folder.READ_ONLY);
 
@@ -67,16 +155,21 @@ public class ImapInboxService {
             }
 
             Arrays.sort(found, Comparator.comparing(this::safeReceived).reversed());
-            int cap = Math.max(1, props.getMaxResults());
+            int cap = Math.max(1, session.getMaxResults());
             List<InboxMessageDto> out = new ArrayList<>(Math.min(found.length, cap));
             for (int i = 0; i < found.length && i < cap; i++) {
                 out.add(toDto(found[i]));
             }
-            log.debug("IMAP subject search '{}' returned {} message(s) (capped at {})", subject, found.length, cap);
+            log.debug(
+                    "IMAP subject search '{}' for {} returned {} message(s) (capped at {})",
+                    subject,
+                    maskEmail(session.getUsername()),
+                    found.length,
+                    cap);
             return InboxSearchResponse.ok(subject, out);
         } catch (MessagingException ex) {
-            log.warn("IMAP inbox lookup failed: {}", ex.getMessage());
-            return InboxSearchResponse.error(subject, "Could not read inbox: " + ex.getMessage());
+            log.warn("IMAP inbox lookup failed for {}: {}", maskEmail(session.getUsername()), ex.getMessage());
+            return InboxSearchResponse.error(subject, mapImapError(ex));
         } catch (Exception ex) {
             log.warn("Unexpected error during inbox lookup", ex);
             return InboxSearchResponse.error(subject, "Inbox lookup failed: " + ex.getMessage());
@@ -84,6 +177,32 @@ public class ImapInboxService {
             closeQuietly(folder);
             closeQuietly(store);
         }
+    }
+
+    private static String maskEmail(String email) {
+        if (email == null || email.isBlank()) {
+            return "(unknown)";
+        }
+        int at = email.indexOf('@');
+        if (at <= 1) {
+            return "***";
+        }
+        return email.charAt(0) + "***" + email.substring(at);
+    }
+
+    private static String mapImapError(MessagingException ex) {
+        String msg = ex.getMessage() != null ? ex.getMessage() : ex.toString();
+        String lower = msg.toLowerCase();
+        if (lower.contains("invalid credentials") || lower.contains("authenticationfailed")) {
+            return "Mail server rejected the login (invalid credentials). For Gmail: enable IMAP, use 2-Step "
+                    + "Verification, then create an App Password at https://myaccount.google.com/apppasswords "
+                    + "(16 characters, no spaces). Use your full email address as the username.";
+        }
+        if (lower.contains("oauth2") && lower.contains("more")) {
+            return "Gmail rejected the OAuth token (missing mail.google.com scope). Sign out, sign in with Google "
+                    + "again, and allow full Gmail access when prompted.";
+        }
+        return "Could not read inbox: " + msg;
     }
 
     private long safeReceived(Message m) {

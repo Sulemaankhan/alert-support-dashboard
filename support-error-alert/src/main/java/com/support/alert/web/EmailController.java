@@ -1,18 +1,26 @@
 package com.support.alert.web;
 
+import com.support.alert.auth.AuthContext;
+import com.support.alert.auth.AuthUser;
 import com.support.alert.email.ImapInboxService;
+import com.support.alert.email.InboxSearchRequest;
 import com.support.alert.email.InboxSearchResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/email")
-@CrossOrigin(origins = {"http://localhost:5173", "http://localhost:3000"})
 public class EmailController {
+
+    private static final Logger log = LoggerFactory.getLogger(EmailController.class);
 
     private final ImapInboxService inboxService;
 
@@ -20,15 +28,36 @@ public class EmailController {
         this.inboxService = inboxService;
     }
 
-    /**
-     * Returns inbox messages whose subject contains the given text (IMAP SUBJECT search).
-     */
-    @GetMapping("/inbox")
-    public ResponseEntity<InboxSearchResponse> inboxBySubject(@RequestParam("subject") String subject) {
-        if (subject == null || subject.isBlank()) {
-            throw new IllegalArgumentException("Query parameter 'subject' is required and must not be blank.");
+    @PostMapping(value = {"/inbox", "/inbox/search"}, consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<InboxSearchResponse> inboxBySubject(@RequestBody(required = false) InboxSearchRequest request) {
+        if (request == null) {
+            return ResponseEntity.badRequest().build();
         }
-        InboxSearchResponse body = inboxService.searchBySubject(subject.trim());
+
+        Optional<AuthUser> userOpt = AuthContext.currentUser();
+        String signedInEmail = userOpt.map(AuthUser::getEmail).orElse(null);
+        String googleToken = null;
+        if (userOpt.isPresent() && userOpt.get().isGmailInboxAccess()) {
+            googleToken = userOpt.get().getGoogleAccessToken();
+        } else if (userOpt.isPresent()) {
+            log.debug(
+                    "Inbox search for {} without Gmail token (gmailInboxAccess={})",
+                    mask(signedInEmail),
+                    userOpt.get().isGmailInboxAccess());
+        }
+
+        InboxSearchResponse body = inboxService.searchBySubject(request, signedInEmail, googleToken);
         return ResponseEntity.ok(body);
+    }
+
+    private static String mask(String email) {
+        if (email == null || email.isBlank()) {
+            return "(unknown)";
+        }
+        int at = email.indexOf('@');
+        if (at <= 1) {
+            return "***";
+        }
+        return email.charAt(0) + "***" + email.substring(at);
     }
 }

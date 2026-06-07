@@ -24,11 +24,17 @@ async function readErrorDetail(response) {
  */
 export async function request(path, init = {}) {
   const url = buildUrl(path);
-  const response = await fetch(url, init);
+  const response = await fetch(url, {
+    credentials: 'include',
+    ...init,
+  });
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     const err = new Error(detail || `Request failed (${response.status})`);
     err.status = response.status;
+    if (response.status === 401) {
+      err.unauthorized = true;
+    }
     throw err;
   }
   return response;

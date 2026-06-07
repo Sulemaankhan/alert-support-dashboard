@@ -40,6 +40,17 @@ public class InMemoryAlertStore {
         log.debug("Store addAll: +{} record(s); total={}", records.size(), alerts.size());
     }
 
+    /**
+     * Replaces all alerts with at most one record (JSON or email ingest).
+     */
+    public void replaceWithSingle(AlertRecord record) {
+        alerts.clear();
+        if (record != null) {
+            alerts.add(record);
+        }
+        log.debug("Store replaceWithSingle: total={}", alerts.size());
+    }
+
     public int size() {
         return alerts.size();
     }

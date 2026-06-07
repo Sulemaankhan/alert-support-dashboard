@@ -38,6 +38,10 @@ overridedb.*
 target
 .flattened-pom.xml
 secrets.yml
+application-local.properties
+**/application-local.properties
+google-oauth.properties
+**/google-oauth.properties
 .gradletasknamecache
 .sts4-cache
 .git-hooks/

@@ -73,7 +73,16 @@ public class ImapEmailProperties {
         this.maxResults = maxResults;
     }
 
+    public boolean hasPassword() {
+        return password != null && !password.isBlank();
+    }
+
     public boolean isRunnable() {
-        return enabled && host != null && !host.isBlank() && username != null && !username.isBlank();
+        return enabled
+                && host != null
+                && !host.isBlank()
+                && username != null
+                && !username.isBlank()
+                && hasPassword();
     }
 }

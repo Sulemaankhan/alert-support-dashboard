@@ -20,7 +20,9 @@ public class LoggingStartupInfo implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        log.info("jira-support-alert ready - port={}, application logs: {}/jira-support-alert.log",
-                serverPort, logPath);
+        log.info(
+                "jira-support-alert ready - port={}, IMAP inbox via UI credentials, application logs: {}/jira-support-alert.log",
+                serverPort,
+                logPath);
     }
 }

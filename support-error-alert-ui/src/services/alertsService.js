@@ -27,6 +27,27 @@ export async function ingestAlertsJson(jsonBody) {
 }
 
 /**
+ * Replaces the single active alert with one from an inbox message.
+ * @param {import('../types/inbox').InboxMessage} message
+ * @returns {Promise<import('../types/alerts').Alert>}
+ */
+export async function ingestAlertFromEmail(message) {
+  const body = {
+    messageId: message.messageId ?? null,
+    subject: String(message.subject ?? ''),
+    from: String(message.from ?? ''),
+    sentAt: message.sentAt ?? null,
+    preview: String(message.preview ?? ''),
+  };
+  const res = await request('/api/alerts/ingest/email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+/**
  * @param {string} alertId
  * @param {import('../types/alerts').AlertStatus} status
  */

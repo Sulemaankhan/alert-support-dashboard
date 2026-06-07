@@ -4,11 +4,21 @@ import { AlertTableRow } from './AlertTableRow.jsx';
 import { distinctJiraBatchIds, filterAlerts } from '../lib/filterAlerts.js';
 import './AlertsTable.css';
 
-const COLUMNS = [
+const JSON_COLUMNS = [
   { key: 'details', label: 'Error details' },
   { key: 'fn', label: 'Function path' },
   { key: 'file', label: 'File path' },
   { key: 'service', label: 'Service name' },
+  { key: 'jira', label: 'Jira' },
+  { key: 'sev', label: 'Severity' },
+  { key: 'status', label: 'Status' },
+];
+
+const EMAIL_COLUMNS = [
+  { key: 'details', label: 'Inbox msg' },
+  { key: 'fn', label: 'From email' },
+  { key: 'file', label: 'Date received' },
+  { key: 'service', label: 'Subject' },
   { key: 'jira', label: 'Jira' },
   { key: 'sev', label: 'Severity' },
   { key: 'status', label: 'Status' },
@@ -22,25 +32,35 @@ const ALL = 'ALL';
  * @param {boolean} props.loading
  * @param {function(string, string): void} props.onStatusChange
  * @param {boolean} [props.rowActionsBusy]
- * @param {function(): void} props.onClearJson
+ * @param {string} props.title
+ * @param {string} props.emptyMessage
+ * @param {string} props.clearLabel
+ * @param {function(): void} props.onClear
  * @param {function(): void} props.onRefresh
- * @param {boolean} props.canClearJson
+ * @param {boolean} props.canClear
+ * @param {boolean} [props.embedded]
  * @param {boolean} props.jiraConfigured
  * @param {string} [props.jiraSiteUrl]
  * @param {function(string, Record<string, string>): void | Promise<void>} props.onCreateJiraIssue
  */
 export function AlertsTable({
+  title,
+  emptyMessage,
+  clearLabel,
   alerts,
   loading,
   onStatusChange,
   rowActionsBusy,
-  onClearJson,
+  onClear,
   onRefresh,
-  canClearJson,
+  canClear,
   jiraConfigured,
   jiraSiteUrl,
   onCreateJiraIssue,
+  embedded = false,
+  variant = 'json',
 }) {
+  const columns = variant === 'email' ? EMAIL_COLUMNS : JSON_COLUMNS;
   const [severityFilter, setSeverityFilter] = useState(ALL);
   const [statusFilter, setStatusFilter] = useState(ALL);
   const [jiraFilter, setJiraFilter] = useState(ALL);
@@ -93,37 +113,50 @@ export function AlertsTable({
     onJiraChange: setJiraFilter,
     onClearFilters: clearFilters,
     hasActiveFilters,
-    onClearJson,
+    onClear,
     onRefresh,
     loading,
     actionsBusy: rowActionsBusy,
-    canClearJson,
+    canClear,
+    clearLabel,
   };
 
+  const Tag = embedded ? 'div' : 'section';
+  const rootClass = embedded ? 'alerts-table-wrap alerts-table-wrap--embedded' : 'alerts-table-wrap';
+
   return (
-    <div className="alerts-table-wrap">
+    <Tag className={rootClass} aria-labelledby={embedded ? undefined : 'alerts-table-heading'}>
+      {!embedded ? (
+        <div className="alerts-table__head">
+          <h2 id="alerts-table-heading" className="alerts-table__title">
+            {title}
+          </h2>
+        </div>
+      ) : (
+        <div className="alerts-table__head alerts-table__head--embedded">
+          <h3 className="alerts-table__title alerts-table__title--embedded">{title} details</h3>
+        </div>
+      )}
       {loading && alerts.length === 0 ? (
-        <div className="alerts-table__empty">Loading alerts…</div>
+        <div className="alerts-table__empty">Loading {title.toLowerCase()}…</div>
       ) : alerts.length === 0 ? (
         <>
           {showFilterBar ? <AlertFilters {...filterBarProps} /> : null}
-          <div className="alerts-table__empty">
-            No alerts yet. Upload a JSON file or POST to <span className="mono">/api/alerts/ingest</span>.
-          </div>
+          <div className="alerts-table__empty">{emptyMessage}</div>
         </>
       ) : (
         <>
           {showFilterBar ? <AlertFilters {...filterBarProps} /> : null}
           {filteredAlerts.length === 0 ? (
             <div className="alerts-table__empty alerts-table__empty--filtered">
-              No alerts match the selected filters.
+              No rows match the selected filters.
             </div>
           ) : (
             <div className="alerts-table__scroll">
               <table className="alerts-table">
                 <thead>
                   <tr>
-                    {COLUMNS.map((c) => (
+                    {columns.map((c) => (
                       <th key={c.key} scope="col">
                         {c.label}
                       </th>
@@ -148,6 +181,6 @@ export function AlertsTable({
           )}
         </>
       )}
-    </div>
+    </Tag>
   );
 }
