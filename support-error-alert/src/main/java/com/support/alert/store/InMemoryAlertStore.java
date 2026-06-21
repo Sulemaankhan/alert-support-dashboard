@@ -63,18 +63,7 @@ public class InMemoryAlertStore {
         for (int i = 0; i < alerts.size(); i++) {
             AlertRecord existing = alerts.get(i);
             if (existing.getId().equals(id)) {
-                AlertRecord updated = new AlertRecord(
-                        existing.getId(),
-                        existing.getErrorDetails(),
-                        existing.getFunctionPath(),
-                        existing.getFilePath(),
-                        existing.getServiceName(),
-                        existing.getSeverity(),
-                        status,
-                        existing.getCreatedAt(),
-                        existing.getJiraBatchId(),
-                        existing.getJiraIssueKeys()
-                );
+                AlertRecord updated = existing.withStatus(status);
                 alerts.set(i, updated);
                 return Optional.of(updated);
             }

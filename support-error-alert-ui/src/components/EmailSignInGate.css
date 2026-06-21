@@ -1,0 +1,44 @@
+.email-signin-gate {
+  scroll-margin-top: 4.5rem;
+}
+
+.email-signin-gate__card {
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 2rem 1.75rem;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(28, 33, 40, 0.05);
+}
+
+.email-signin-gate__title {
+  margin: 0 0 0.65rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.email-signin-gate__text {
+  margin: 0 0 1.25rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.email-signin-gate__btn {
+  min-width: 12rem;
+}
+
+.email-signin-gate__google-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.email-signin-gate__error {
+  margin: 1rem 0 0;
+  color: var(--danger, #b42318);
+  font-size: 0.875rem;
+}

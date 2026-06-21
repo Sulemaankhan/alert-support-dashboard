@@ -59,6 +59,7 @@ public class AuthController {
                     "Start with --support.auth.google-client-id=YOUR_ID.apps.googleusercontent.com or set GOOGLE_CLIENT_ID.");
         }
         out.put("googleSsoOnly", authProperties.isGoogleSsoOnly());
+        out.put("jsonAlertsWithoutSignIn", authProperties.isJsonAlertsWithoutSignIn());
         boolean smtp = MailAuthSupport.isSmtpConfigured(environment);
         out.put("emailOtpConfigured", smtp);
         if (!smtp && !authProperties.getDevFixedOtp().isBlank()) {

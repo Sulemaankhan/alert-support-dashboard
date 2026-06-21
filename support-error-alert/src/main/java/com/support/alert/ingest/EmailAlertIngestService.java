@@ -43,8 +43,11 @@ public class EmailAlertIngestService {
         return new AlertRecord(
                 UUID.randomUUID(),
                 inboxMessage,
+                inboxMessage,
+                "",
                 from,
                 receivedAt,
+                "",
                 serviceName,
                 AlertSeverity.MEDIUM,
                 AlertStatus.OPEN,

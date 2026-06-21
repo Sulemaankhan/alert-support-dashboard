@@ -1,10 +1,12 @@
 {
   "serviceName": "payment-gateway",
-  "errors": [
+    "errors": [
     {
-      "message": "NullPointerException when parsing payload",
+      "message": "when parsing payload",
+      "exception": "NullPointerException",
       "filePath": "src/main/java/com/acme/payment/PaymentParser.java",
       "functionPath": "com.acme.payment.PaymentParser.parse(PaymentParser.java:112)",
+      "lineNumber": "112",
       "severity": "HIGH",
       "status": "OPEN"
     },

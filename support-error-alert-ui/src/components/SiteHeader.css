@@ -46,6 +46,21 @@
   padding: 0.35rem 0.65rem;
 }
 
+.site-header__sign-in {
+  font-size: 0.8rem;
+  padding: 0.35rem 0.75rem;
+}
+
+.site-header__guest-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+}
+
 .site-header__brand {
   display: inline-flex;
   align-items: center;

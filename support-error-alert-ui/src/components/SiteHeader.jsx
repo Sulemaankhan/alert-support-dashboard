@@ -5,11 +5,12 @@ import './SiteHeader.css';
 
 /**
  * @param {Object} props
- * @param {{ email: string, displayName?: string }} props.user
- * @param {() => void | Promise<void>} props.onSignOut
+ * @param {{ email: string, displayName?: string } | null} [props.user]
+ * @param {boolean} [props.guestMode]
+ * @param {() => void | Promise<void>} [props.onSignOut]
  * @param {'home' | 'json' | 'email'} [props.activeView]
  */
-export function SiteHeader({ user, onSignOut, activeView = 'home' }) {
+export function SiteHeader({ user, guestMode = false, onSignOut, activeView = 'home' }) {
   return (
     <header className="site-header">
       <div className="site-header__inner">
@@ -45,12 +46,18 @@ export function SiteHeader({ user, onSignOut, activeView = 'home' }) {
             </ul>
           </nav>
           <div className="site-header__user">
-            <span className="site-header__email" title={user.email}>
-              {user.displayName || user.email}
-            </span>
-            <button type="button" className="btn site-header__sign-out" onClick={onSignOut}>
-              Sign out
-            </button>
+            {guestMode ? (
+              <span className="site-header__guest-label">Browsing without sign-in</span>
+            ) : (
+              <>
+                <span className="site-header__email" title={user?.email}>
+                  {user?.displayName || user?.email}
+                </span>
+                <button type="button" className="btn site-header__sign-out" onClick={onSignOut}>
+                  Sign out
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

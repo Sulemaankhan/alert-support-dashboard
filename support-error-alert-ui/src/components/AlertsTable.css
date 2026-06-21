@@ -92,8 +92,19 @@
   word-break: break-all;
 }
 
-.alerts-table__details {
-  max-width: 280px;
+.alerts-table__details,
+.alerts-table__message {
+  max-width: 220px;
+}
+
+.alerts-table__exception {
+  max-width: 160px;
+}
+
+.alerts-table__line {
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .alerts-table__empty {

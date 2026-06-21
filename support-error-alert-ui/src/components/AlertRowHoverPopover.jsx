@@ -15,6 +15,7 @@ function formatCreated(iso) {
 /**
  * @param {Object} props
  * @param {import('../types/alerts').Alert} props.alert
+ * @param {'json' | 'email'} [props.variant]
  * @param {boolean} props.open
  * @param {import('react').RefObject<HTMLDivElement | null>} props.panelRef
  * @param {{ top: number, left: number, width: number } | null} props.position
@@ -23,6 +24,7 @@ function formatCreated(iso) {
  */
 export function AlertRowHoverPopover({
   alert,
+  variant = 'json',
   open,
   panelRef,
   position,
@@ -68,20 +70,44 @@ export function AlertRowHoverPopover({
               <dd className="mono">{keys.join(', ')}</dd>
             </>
           ) : null}
+          {variant === 'json' ? (
+            <>
+              {alert.message ? (
+                <>
+                  <dt>Message</dt>
+                  <dd>{alert.message}</dd>
+                </>
+              ) : null}
+              {alert.exception ? (
+                <>
+                  <dt>Exception</dt>
+                  <dd className="mono">{alert.exception}</dd>
+                </>
+              ) : null}
+            </>
+          ) : null}
           {alert.functionPath ? (
             <>
-              <dt>Function</dt>
+              <dt>{variant === 'email' ? 'From' : 'Function'}</dt>
               <dd className="mono">{alert.functionPath}</dd>
             </>
           ) : null}
           {alert.filePath ? (
             <>
-              <dt>File</dt>
+              <dt>{variant === 'email' ? 'Received' : 'File'}</dt>
               <dd className="mono">{alert.filePath}</dd>
             </>
           ) : null}
+          {variant === 'json' && alert.lineNumber ? (
+            <>
+              <dt>Line</dt>
+              <dd className="mono">{alert.lineNumber}</dd>
+            </>
+          ) : null}
         </dl>
-        <p className="alert-row-hover__details-label">Error details</p>
+        <p className="alert-row-hover__details-label">
+          {variant === 'email' ? 'Inbox message' : 'Full error details'}
+        </p>
         <pre className="alert-row-hover__pre">{alert.errorDetails?.trim() || '—'}</pre>
       </div>
     </div>,

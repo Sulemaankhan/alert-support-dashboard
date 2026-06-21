@@ -8,21 +8,35 @@ const HOVER_CLOSE_MS = 220;
 const POPOVER_GAP = 6;
 const ESTIMATED_POPOVER_H = 260;
 
-function CellMono({ children }) {
+function CellMono({ children, className = '' }) {
   const text = children && String(children).trim() ? children : '—';
-  return <td className="alerts-table__mono">{text}</td>;
+  return <td className={`alerts-table__mono ${className}`.trim()}>{text}</td>;
+}
+
+function CellText({ children, className = '' }) {
+  const text = children && String(children).trim() ? children : '—';
+  return <td className={className || undefined}>{text}</td>;
 }
 
 /**
  * @param {Object} props
  * @param {import('../types/alerts').Alert} props.alert
+ * @param {'json' | 'email'} [props.variant]
  * @param {function(string, string): void} props.onStatusChange
  * @param {boolean} [props.busy]
  * @param {boolean} props.jiraConfigured
  * @param {string} [props.jiraSiteUrl]
  * @param {function(string, Record<string, string>): void | Promise<void>} props.onCreateJiraIssue
  */
-export function AlertTableRow({ alert, onStatusChange, busy, jiraConfigured, jiraSiteUrl, onCreateJiraIssue }) {
+export function AlertTableRow({
+  alert,
+  variant = 'json',
+  onStatusChange,
+  busy,
+  jiraConfigured,
+  jiraSiteUrl,
+  onCreateJiraIssue,
+}) {
   const trRef = useRef(/** @type {HTMLTableRowElement | null} */ (null));
   const panelRef = useRef(/** @type {HTMLDivElement | null} */ (null));
   const closeTimerRef = useRef(/** @type {number | undefined} */ (undefined));
@@ -116,6 +130,25 @@ export function AlertTableRow({ alert, onStatusChange, busy, jiraConfigured, jir
     return () => window.removeEventListener('keydown', onKey);
   }, [hoverOpen, clearCloseTimer]);
 
+  const dataCells =
+    variant === 'email' ? (
+      <>
+        <CellText className="alerts-table__details">{alert.errorDetails}</CellText>
+        <CellMono>{alert.functionPath}</CellMono>
+        <CellMono>{alert.filePath}</CellMono>
+        <CellText>{alert.serviceName}</CellText>
+      </>
+    ) : (
+      <>
+        <CellText className="alerts-table__message">{alert.message || alert.errorDetails}</CellText>
+        <CellMono className="alerts-table__exception">{alert.exception}</CellMono>
+        <CellMono>{alert.functionPath}</CellMono>
+        <CellMono>{alert.filePath}</CellMono>
+        <CellMono className="alerts-table__line">{alert.lineNumber}</CellMono>
+        <CellText>{alert.serviceName}</CellText>
+      </>
+    );
+
   return [
     <tr
       key={alert.id}
@@ -124,10 +157,7 @@ export function AlertTableRow({ alert, onStatusChange, busy, jiraConfigured, jir
       onMouseEnter={handleRowEnter}
       onMouseLeave={handleRowLeave}
     >
-      <td className="alerts-table__details">{alert.errorDetails}</td>
-      <CellMono>{alert.functionPath}</CellMono>
-      <CellMono>{alert.filePath}</CellMono>
-      <td>{alert.serviceName}</td>
+      {dataCells}
       <JiraCell
         alertId={alert.id}
         issueKeys={alert.jiraIssueKeys}
@@ -150,6 +180,7 @@ export function AlertTableRow({ alert, onStatusChange, busy, jiraConfigured, jir
     <AlertRowHoverPopover
       key={`${alert.id}-hover-popover`}
       alert={alert}
+      variant={variant}
       open={hoverOpen}
       panelRef={panelRef}
       position={panelPos}

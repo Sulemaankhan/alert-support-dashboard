@@ -19,6 +19,9 @@ public class AuthProperties {
     /** When true, only Google SSO is offered (no email OTP sign-in). */
     private boolean googleSsoOnly = true;
 
+    /** When true, JSON alert APIs work without a session (email inbox still requires sign-in). */
+    private boolean jsonAlertsWithoutSignIn = true;
+
     /** When true, log OTP to server logs if email cannot be sent (local dev). */
     private boolean devLogOtp = true;
 
@@ -66,6 +69,14 @@ public class AuthProperties {
 
     public void setGoogleSsoOnly(boolean googleSsoOnly) {
         this.googleSsoOnly = googleSsoOnly;
+    }
+
+    public boolean isJsonAlertsWithoutSignIn() {
+        return jsonAlertsWithoutSignIn;
+    }
+
+    public void setJsonAlertsWithoutSignIn(boolean jsonAlertsWithoutSignIn) {
+        this.jsonAlertsWithoutSignIn = jsonAlertsWithoutSignIn;
     }
 
     public boolean isDevLogOtp() {

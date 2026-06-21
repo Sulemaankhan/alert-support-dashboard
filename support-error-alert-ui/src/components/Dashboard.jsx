@@ -1,6 +1,7 @@
 import { ALERT_SOURCE } from '../constants/alertSource.js';
 
 import { EmailAlertPanel } from './EmailAlertPanel.jsx';
+import { EmailSignInGate } from './EmailSignInGate.jsx';
 
 import { ErrorBanner } from './ErrorBanner.jsx';
 
@@ -19,7 +20,7 @@ import { useNavView } from '../hooks/useNavView.js';
 
 
 
-export function Dashboard() {
+export function Dashboard({ guestMode = false }) {
 
   const { user, signOut } = useAuth();
 
@@ -83,12 +84,17 @@ export function Dashboard() {
 
   return (
     <div className="app-shell">
-      <SiteHeader user={user} onSignOut={signOut} activeView={navView} />
+      <SiteHeader
+        user={user}
+        guestMode={guestMode}
+        onSignOut={signOut}
+        activeView={navView}
+      />
       <div className="app">
 
         <ErrorBanner message={error} onDismiss={dismissError} />
 
-        {navView === 'home' ? <OverviewPanel /> : null}
+        {navView === 'home' ? <OverviewPanel guestMode={guestMode} /> : null}
 
         {navView === 'json' ? (
 
@@ -109,23 +115,18 @@ export function Dashboard() {
         ) : null}
 
         {navView === 'email' ? (
-
-          <EmailAlertPanel
-
-            alerts={emailAlerts}
-
-            onEmailSelected={ingestFromEmail}
-
-            busy={busy}
-
-            defaultMailboxEmail={user?.email ?? ''}
-
-            onClear={() => clearIngestedAlerts(ALERT_SOURCE.EMAIL)}
-
-            {...sharedTableProps}
-
-          />
-
+          guestMode ? (
+            <EmailSignInGate />
+          ) : (
+            <EmailAlertPanel
+              alerts={emailAlerts}
+              onEmailSelected={ingestFromEmail}
+              busy={busy}
+              defaultMailboxEmail={user?.email ?? ''}
+              onClear={() => clearIngestedAlerts(ALERT_SOURCE.EMAIL)}
+              {...sharedTableProps}
+            />
+          )
         ) : null}
 
       </div>

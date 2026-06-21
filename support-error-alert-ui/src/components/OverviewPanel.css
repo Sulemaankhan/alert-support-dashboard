@@ -54,3 +54,8 @@
   font-size: 0.85rem;
   color: var(--muted);
 }
+
+.overview-panel__card--locked {
+  opacity: 0.92;
+  border-style: dashed;
+}

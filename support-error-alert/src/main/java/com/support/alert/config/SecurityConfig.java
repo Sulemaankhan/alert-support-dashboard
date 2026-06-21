@@ -41,6 +41,14 @@ public class SecurityConfig {
             if (!authProperties.isEnabled()) {
                 auth.anyRequest().permitAll();
             } else {
+                if (authProperties.isJsonAlertsWithoutSignIn()) {
+                    auth.requestMatchers(HttpMethod.GET, "/api/alerts").permitAll();
+                    auth.requestMatchers(HttpMethod.POST, "/api/alerts/ingest").permitAll();
+                    auth.requestMatchers(HttpMethod.PUT, "/api/alerts/**").permitAll();
+                    auth.requestMatchers(HttpMethod.DELETE, "/api/alerts").permitAll();
+                    auth.requestMatchers(HttpMethod.POST, "/api/alerts/*/jira/issue").permitAll();
+                    auth.requestMatchers(HttpMethod.GET, "/api/jira/**").permitAll();
+                }
                 auth.anyRequest().authenticated();
             }
         });

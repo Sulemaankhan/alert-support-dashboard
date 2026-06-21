@@ -5,9 +5,11 @@ import { distinctJiraBatchIds, filterAlerts } from '../lib/filterAlerts.js';
 import './AlertsTable.css';
 
 const JSON_COLUMNS = [
-  { key: 'details', label: 'Error details' },
+  { key: 'message', label: 'Message' },
+  { key: 'exception', label: 'Exception' },
   { key: 'fn', label: 'Function path' },
   { key: 'file', label: 'File path' },
+  { key: 'line', label: 'Line no' },
   { key: 'service', label: 'Service name' },
   { key: 'jira', label: 'Jira' },
   { key: 'sev', label: 'Severity' },
@@ -168,6 +170,7 @@ export function AlertsTable({
                     <AlertTableRow
                       key={alert.id}
                       alert={alert}
+                      variant={variant}
                       onStatusChange={onStatusChange}
                       busy={rowActionsBusy}
                       jiraConfigured={jiraConfigured}

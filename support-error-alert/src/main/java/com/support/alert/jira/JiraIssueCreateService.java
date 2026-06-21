@@ -117,9 +117,12 @@ public class JiraIssueCreateService {
         } else {
             sb.append("(No error details)");
         }
+        appendLine(sb, "Message", alert.getMessage());
+        appendLine(sb, "Exception", alert.getException());
         appendLine(sb, "Service", alert.getServiceName());
         appendLine(sb, "Function", alert.getFunctionPath());
         appendLine(sb, "File", alert.getFilePath());
+        appendLine(sb, "Line", alert.getLineNumber());
         appendLine(sb, "Severity", alert.getSeverity() != null ? alert.getSeverity().name() : "");
         return sb.toString();
     }

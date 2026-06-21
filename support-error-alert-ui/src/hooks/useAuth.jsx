@@ -1,9 +1,32 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { NAV_SECTION } from '../constants/nav.js';
 import * as authService from '../services/authService.js';
 
 /** @typedef {{ email: string, displayName: string }} AuthUser */
 
+const GUEST_MODE_KEY = 'support-alert-json-guest';
+
 const AuthContext = createContext(/** @type {null | object} */ (null));
+
+function readGuestMode() {
+  try {
+    return sessionStorage.getItem(GUEST_MODE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeGuestMode(active) {
+  try {
+    if (active) {
+      sessionStorage.setItem(GUEST_MODE_KEY, '1');
+    } else {
+      sessionStorage.removeItem(GUEST_MODE_KEY);
+    }
+  } catch {
+    /* private browsing */
+  }
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(/** @type {AuthUser | null} */ (null));
@@ -12,12 +35,18 @@ export function AuthProvider({ children }) {
   const [devSignInCode, setDevSignInCode] = useState(/** @type {string | null} */ (null));
   const [emailOtpConfigured, setEmailOtpConfigured] = useState(false);
   const [googleSsoOnly, setGoogleSsoOnly] = useState(true);
+  const [jsonAlertsWithoutSignIn, setJsonAlertsWithoutSignIn] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(true);
+  const [guestMode, setGuestMode] = useState(() => readGuestMode());
 
   const refreshUser = useCallback(async () => {
     try {
       const me = await authService.fetchCurrentUser();
       setUser(me);
+      if (me) {
+        writeGuestMode(false);
+        setGuestMode(false);
+      }
       return me;
     } catch {
       setUser(null);
@@ -36,10 +65,21 @@ export function AuthProvider({ children }) {
         setDevSignInCode(typeof config.devSignInCode === 'string' ? config.devSignInCode : null);
         setEmailOtpConfigured(Boolean(config.emailOtpConfigured));
         setGoogleSsoOnly(config.googleSsoOnly !== false);
+        setJsonAlertsWithoutSignIn(config.jsonAlertsWithoutSignIn !== false);
+        if (config.jsonAlertsWithoutSignIn === false) {
+          writeGuestMode(false);
+          setGuestMode(false);
+        }
         if (!config.enabled) {
           setUser({ email: 'local@dev', displayName: 'Local user' });
+          writeGuestMode(false);
+          setGuestMode(false);
         } else {
-          await refreshUser();
+          const me = await refreshUser();
+          if (!me && config.jsonAlertsWithoutSignIn !== false) {
+            writeGuestMode(true);
+            setGuestMode(true);
+          }
         }
       } catch {
         if (!cancelled) setUser(null);
@@ -52,8 +92,21 @@ export function AuthProvider({ children }) {
     };
   }, [refreshUser]);
 
+  const enterGuestMode = useCallback(() => {
+    writeGuestMode(true);
+    setGuestMode(true);
+    window.location.hash = `#${NAV_SECTION.JSON_ALERT}`;
+  }, []);
+
+  const exitGuestMode = useCallback(() => {
+    writeGuestMode(false);
+    setGuestMode(false);
+  }, []);
+
   const signInWithEmailCode = useCallback(async (email, code, google) => {
     const u = await authService.verifyEmailCode(email, code, google);
+    writeGuestMode(false);
+    setGuestMode(false);
     setUser(u);
     return u;
   }, []);
@@ -62,6 +115,8 @@ export function AuthProvider({ children }) {
 
   const signInWithGoogleToken = useCallback(async (tokens) => {
     const u = await authService.signInWithGoogle(tokens);
+    writeGuestMode(false);
+    setGuestMode(false);
     setUser(u);
     return u;
   }, []);
@@ -80,6 +135,8 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const isGuest = guestMode && !user && jsonAlertsWithoutSignIn;
+
   const value = useMemo(
     () => ({
       user,
@@ -89,6 +146,10 @@ export function AuthProvider({ children }) {
       devSignInCode,
       emailOtpConfigured,
       googleSsoOnly,
+      jsonAlertsWithoutSignIn,
+      isGuest,
+      enterGuestMode,
+      exitGuestMode,
       sendEmailCode,
       signInWithEmailCode,
       signInWithGoogleToken,
@@ -104,6 +165,10 @@ export function AuthProvider({ children }) {
       devSignInCode,
       emailOtpConfigured,
       googleSsoOnly,
+      jsonAlertsWithoutSignIn,
+      isGuest,
+      enterGuestMode,
+      exitGuestMode,
       sendEmailCode,
       signInWithEmailCode,
       signInWithGoogleToken,

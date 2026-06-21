@@ -66,8 +66,8 @@ public class AlertController {
     }
 
     @PostMapping("/ingest")
-    public ResponseEntity<List<AlertRecord>> ingest(@RequestBody(required = false) JsonNode body) {
-        if (body == null) {
+    public ResponseEntity<List<AlertRecord>> ingest(@RequestBody(required = false) String body) {
+        if (body == null || body.isBlank()) {
             log.warn("POST /api/alerts/ingest - rejected: empty body");
             return ResponseEntity.badRequest().build();
         }

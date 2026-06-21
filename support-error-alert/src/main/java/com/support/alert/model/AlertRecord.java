@@ -13,8 +13,11 @@ public class AlertRecord {
 
     private final UUID id;
     private final String errorDetails;
+    private final String message;
+    private final String exception;
     private final String functionPath;
     private final String filePath;
+    private final String lineNumber;
     private final String serviceName;
     private final AlertSeverity severity;
     private final AlertStatus status;
@@ -26,8 +29,11 @@ public class AlertRecord {
     public AlertRecord(
             @JsonProperty("id") UUID id,
             @JsonProperty("errorDetails") String errorDetails,
+            @JsonProperty("message") String message,
+            @JsonProperty("exception") String exception,
             @JsonProperty("functionPath") String functionPath,
             @JsonProperty("filePath") String filePath,
+            @JsonProperty("lineNumber") String lineNumber,
             @JsonProperty("serviceName") String serviceName,
             @JsonProperty("severity") AlertSeverity severity,
             @JsonProperty("status") AlertStatus status,
@@ -35,9 +41,12 @@ public class AlertRecord {
             @JsonProperty("jiraBatchId") String jiraBatchId,
             @JsonProperty("jiraIssueKeys") List<String> jiraIssueKeys) {
         this.id = id;
-        this.errorDetails = errorDetails;
-        this.functionPath = functionPath;
-        this.filePath = filePath;
+        this.errorDetails = nullToEmpty(errorDetails);
+        this.message = nullToEmpty(message);
+        this.exception = nullToEmpty(exception);
+        this.functionPath = nullToEmpty(functionPath);
+        this.filePath = nullToEmpty(filePath);
+        this.lineNumber = nullToEmpty(lineNumber);
         this.serviceName = serviceName;
         this.severity = severity;
         this.status = status;
@@ -48,6 +57,10 @@ public class AlertRecord {
                 : List.of();
     }
 
+    private static String nullToEmpty(String value) {
+        return value != null ? value : "";
+    }
+
     public UUID getId() {
         return id;
     }
@@ -56,12 +69,24 @@ public class AlertRecord {
         return errorDetails;
     }
 
+    public String getMessage() {
+        return message;
+    }
+
+    public String getException() {
+        return exception;
+    }
+
     public String getFunctionPath() {
         return functionPath;
     }
 
     public String getFilePath() {
         return filePath;
+    }
+
+    public String getLineNumber() {
+        return lineNumber;
     }
 
     public String getServiceName() {
@@ -95,11 +120,31 @@ public class AlertRecord {
         return new AlertRecord(
                 id,
                 errorDetails,
+                message,
+                exception,
                 functionPath,
                 filePath,
+                lineNumber,
                 serviceName,
                 severity,
                 status,
+                createdAt,
+                jiraBatchId,
+                jiraIssueKeys);
+    }
+
+    public AlertRecord withStatus(AlertStatus newStatus) {
+        return new AlertRecord(
+                id,
+                errorDetails,
+                message,
+                exception,
+                functionPath,
+                filePath,
+                lineNumber,
+                serviceName,
+                severity,
+                newStatus,
                 createdAt,
                 jiraBatchId,
                 jiraIssueKeys);
