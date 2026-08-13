@@ -21,4 +21,9 @@ export const SECTION = {
     title: 'Email alert',
     emptyDetail: 'No email alert loaded yet. Search your inbox above, then use a message as the alert.',
   },
+  HEALTH: {
+    title: 'HealthCheck',
+    loadHint:
+      'Realtime APM with live metrics and alert streams for the configured Actuator target.',
+  },
 };

@@ -8,7 +8,7 @@ import './SiteHeader.css';
  * @param {{ email: string, displayName?: string } | null} [props.user]
  * @param {boolean} [props.guestMode]
  * @param {() => void | Promise<void>} [props.onSignOut]
- * @param {'home' | 'json' | 'email'} [props.activeView]
+ * @param {'home' | 'json' | 'email' | 'health'} [props.activeView]
  */
 export function SiteHeader({ user, guestMode = false, onSignOut, activeView = 'home' }) {
   return (

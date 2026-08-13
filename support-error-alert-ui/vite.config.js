@@ -9,6 +9,9 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8081',
         changeOrigin: true,
+        // Keep APM SSE streams open (no proxy idle timeout).
+        timeout: 0,
+        proxyTimeout: 0,
       },
     },
   },

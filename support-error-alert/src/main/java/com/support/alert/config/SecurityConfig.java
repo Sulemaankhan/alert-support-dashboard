@@ -38,6 +38,9 @@ public class SecurityConfig {
         http.authorizeHttpRequests(auth -> {
             auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll();
             auth.requestMatchers("/api/auth/**").permitAll();
+            // Liveness/readiness probes must stay reachable without a session.
+            auth.requestMatchers("/actuator/health", "/actuator/health/**").permitAll();
+            auth.requestMatchers("/actuator/info").permitAll();
             if (!authProperties.isEnabled()) {
                 auth.anyRequest().permitAll();
             } else {
@@ -48,6 +51,7 @@ public class SecurityConfig {
                     auth.requestMatchers(HttpMethod.DELETE, "/api/alerts").permitAll();
                     auth.requestMatchers(HttpMethod.POST, "/api/alerts/*/jira/issue").permitAll();
                     auth.requestMatchers(HttpMethod.GET, "/api/jira/**").permitAll();
+                    auth.requestMatchers(HttpMethod.GET, "/api/health/**").permitAll();
                 }
                 auth.anyRequest().authenticated();
             }

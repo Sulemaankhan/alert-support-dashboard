@@ -9,8 +9,8 @@ export function OverviewPanel({ guestMode = false }) {
       </h2>
       <p className="overview-panel__text">
         {guestMode
-          ? 'Browse Overview and JSON alerts without signing in. Email alerts require Google SSO when you open that section.'
-          : 'Choose how you want to load a support alert.'}
+          ? 'Browse Overview, JSON alerts, and HealthCheck without signing in. Email alerts require Google SSO when you open that section.'
+          : 'Choose how you want to load a support alert, or open HealthCheck for realtime APM.'}
       </p>
       <div className="overview-panel__choices">
         <a className="overview-panel__card" href={`#${NAV_SECTION.JSON_ALERT}`}>
@@ -28,6 +28,12 @@ export function OverviewPanel({ guestMode = false }) {
           <span className="overview-panel__card-title">{NAV_LABEL.EMAIL_ALERT}</span>
           <span className="overview-panel__card-sub">
             {guestMode ? 'Sign in with Google to search Gmail.' : 'Search Gmail and pick a message.'}
+          </span>
+        </a>
+        <a className="overview-panel__card" href={`#${NAV_SECTION.HEALTH_CHECK}`}>
+          <span className="overview-panel__card-title">{NAV_LABEL.HEALTH_CHECK}</span>
+          <span className="overview-panel__card-sub">
+            Live APM: transactions, Apdex, latency, errors, alerts, heap, stack.
           </span>
         </a>
       </div>
