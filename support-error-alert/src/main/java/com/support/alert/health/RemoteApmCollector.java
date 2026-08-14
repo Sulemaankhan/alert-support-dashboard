@@ -23,12 +23,14 @@ public class RemoteApmCollector {
 
     private static final int MAX_SAMPLES = 120;
     private static final long TX_CACHE_MS = 4000L;
+    private static final long RPM_WINDOW_MS = 300_000L;
 
     private final HealthCheckProperties properties;
     private final RemoteActuatorClient client;
     private final List<ApmSnapshot.MetricSample> recentSamples = new ArrayList<>();
     private final AtomicReference<RequestCounters> previousCounters = new AtomicReference<>(RequestCounters.ZERO);
     private final AtomicReference<Instant> previousSampleAt = new AtomicReference<>(null);
+    private final RpmWindow rpmWindow = new RpmWindow(RPM_WINDOW_MS);
     private volatile List<ApmSnapshot.TransactionStats> cachedTransactions = List.of();
     private volatile long cachedTransactionsAt;
 
@@ -72,8 +74,8 @@ public class RemoteApmCollector {
         );
 
         ApmSnapshot.GcStats gc = new ApmSnapshot.GcStats(
-                (long) Math.max(0, metricStatistic("jvm.gc.pause", "COUNT")),
-                (long) Math.max(0, metricStatistic("jvm.gc.pause", "TOTAL_TIME") * 1000.0)
+                (long) Math.max(0, positive(metricStatistic("jvm.gc.pause", "COUNT"))),
+                (long) Math.max(0, positive(metricTimeSeconds("jvm.gc.pause")) * 1000.0)
         );
 
         ApmSnapshot.ThreadStats threads = new ApmSnapshot.ThreadStats(
@@ -89,7 +91,8 @@ public class RemoteApmCollector {
                 )
         );
 
-        RequestBundle requestBundle = readRequests();
+        // RPM must use a fresh counter scrape every tick (transaction details can stay cached).
+        RequestBundle requestBundle = readLiveAppRequestStats();
         List<ApmSnapshot.TransactionStats> transactions = loadTransactions(apdexThreshold);
         ApmSnapshot.ApdexStats apdex = transactions.isEmpty()
                 ? ApmScoring.apdex(requestBundle.requests().avgResponseTimeMs(), apdexThreshold)
@@ -147,6 +150,89 @@ public class RemoteApmCollector {
         return readStacks(40, 40);
     }
 
+    /**
+     * Fresh every tick: sum app URI COUNTs quickly (errors use outcome tags only — no status spam).
+     * Throughput RPM uses EWMA + 5-minute rolling window.
+     */
+    private RequestBundle readLiveAppRequestStats() {
+        Optional<JsonNode> root = client.getJson("/metrics/http.server.requests");
+        if (root.isEmpty()) {
+            return new RequestBundle(new ApmSnapshot.RequestStats(0, 0, 0, 0, 0, 0, 0), 0);
+        }
+
+        long total = 0;
+        long errors = 0;
+        double timeSec = 0;
+        double maxSec = 0;
+        for (String uri : tagValues(root.get(), "uri")) {
+            if (ApmUriFilters.isNoiseUri(uri)) {
+                continue;
+            }
+            double count = positive(metricStatistic("http.server.requests", "COUNT", "uri", uri));
+            if (count <= 0) {
+                continue;
+            }
+            total += (long) count;
+            timeSec += positive(metricTimeSeconds("http.server.requests", "uri", uri));
+            maxSec = Math.max(maxSec, positive(metricStatistic("http.server.requests", "MAX", "uri", uri)));
+            errors += (long) countUriErrorsFast(uri);
+        }
+
+        double avgMs = total > 0 ? round2((timeSec * 1000.0) / total) : 0.0;
+        double maxMs = maxSec > 0 ? round2(maxSec * 1000.0) : avgMs;
+        double overallErrorRate = total > 0 ? round2((errors * 100.0) / total) : 0.0;
+
+        Instant now = Instant.now();
+        RequestCounters current = new RequestCounters(total, errors, timeSec * 1000.0);
+        Instant previousAt = previousSampleAt.get();
+        RequestCounters previous = previousCounters.get();
+
+        if (previousAt == null || current.total < previous.total) {
+            previousCounters.set(current);
+            previousSampleAt.set(now);
+            rpmWindow.clear();
+            double rpm = rpmWindow.observe(now.toEpochMilli(), total);
+            return new RequestBundle(
+                    new ApmSnapshot.RequestStats(total, errors, 0, 0, rpm, overallErrorRate, avgMs),
+                    maxMs
+            );
+        }
+
+        long reqDelta = current.total - previous.total;
+        long errDelta = Math.max(0, current.errors - previous.errors);
+        double rpm = rpmWindow.observe(now.toEpochMilli(), total);
+
+        previousCounters.set(current);
+        previousSampleAt.set(now);
+        return new RequestBundle(
+                new ApmSnapshot.RequestStats(
+                        total,
+                        errors,
+                        reqDelta,
+                        errDelta,
+                        rpm,
+                        reqDelta > 0 ? round2((errDelta * 100.0) / reqDelta) : overallErrorRate,
+                        avgMs
+                ),
+                maxMs
+        );
+    }
+
+    /** Outcome-only error count (avoids 15 status round-trips per URI on every tick). */
+    private double countUriErrorsFast(String uri) {
+        double server = positive(metricStatistic(
+                "http.server.requests",
+                "COUNT",
+                List.of(tag("uri", uri), tag("outcome", "SERVER_ERROR"))
+        ));
+        double client = positive(metricStatistic(
+                "http.server.requests",
+                "COUNT",
+                List.of(tag("uri", uri), tag("outcome", "CLIENT_ERROR"))
+        ));
+        return server + client;
+    }
+
     private List<ApmSnapshot.TransactionStats> loadTransactions(double apdexThreshold) {
         long now = System.currentTimeMillis();
         if (now - cachedTransactionsAt < TX_CACHE_MS && cachedTransactions != null) {
@@ -164,33 +250,20 @@ public class RemoteApmCollector {
             return List.of();
         }
         List<String> uris = tagValues(root.get(), "uri");
-        // Drop Actuator/self-scrape templates so Top Transaction is real app traffic.
         uris.removeIf(ApmUriFilters::isNoiseUri);
-        int limit = Math.max(1, properties.getMaxTransactions());
-        if (uris.size() > limit * 2) {
-            uris = uris.subList(0, limit * 2);
-        }
 
         List<ApmSnapshot.TransactionStats> collected = new ArrayList<>();
         for (String uri : uris) {
-            double count = metricStatistic("http.server.requests", "COUNT", "uri", uri);
+            double count = positive(metricStatistic("http.server.requests", "COUNT", "uri", uri));
             if (count <= 0) {
                 continue;
             }
-            double totalTimeSec = metricStatistic("http.server.requests", "TOTAL_TIME", "uri", uri);
-            double maxSec = metricStatistic("http.server.requests", "MAX", "uri", uri);
-            double errors = metricStatistic(
-                    "http.server.requests",
-                    "COUNT",
-                    List.of(tag("uri", uri), tag("outcome", "SERVER_ERROR"))
-            );
-            if (errors < 0) {
-                errors = 0;
-            }
-            double avgMs = count > 0 ? (totalTimeSec * 1000.0) / count : 0;
-            double maxMs = maxSec > 0 ? maxSec * 1000.0 : avgMs;
+            double uriTimeSec = positive(metricTimeSeconds("http.server.requests", "uri", uri));
+            double uriMaxSec = positive(metricStatistic("http.server.requests", "MAX", "uri", uri));
+            double errors = countUriErrors(uri);
+            double avgMs = count > 0 ? (uriTimeSec * 1000.0) / count : 0;
+            double uriMaxMs = uriMaxSec > 0 ? uriMaxSec * 1000.0 : avgMs;
             double errorRate = count > 0 ? (errors * 100.0) / count : 0;
-            double apdex = ApmScoring.scoreFromAvg(avgMs, apdexThreshold);
             collected.add(new ApmSnapshot.TransactionStats(
                     uri,
                     "*",
@@ -198,16 +271,50 @@ public class RemoteApmCollector {
                     (long) errors,
                     round2(errorRate),
                     round2(avgMs),
-                    round2(maxMs),
-                    apdex
+                    round2(uriMaxMs),
+                    ApmScoring.scoreFromAvg(avgMs, apdexThreshold)
             ));
         }
 
         collected.sort(Comparator.comparingLong(ApmSnapshot.TransactionStats::count).reversed());
+        int limit = Math.max(1, properties.getMaxTransactions());
         if (collected.size() > limit) {
             return List.copyOf(collected.subList(0, limit));
         }
         return List.copyOf(collected);
+    }
+
+    private double countUriErrors(String uri) {
+        double server = positive(metricStatistic(
+                "http.server.requests",
+                "COUNT",
+                List.of(tag("uri", uri), tag("outcome", "SERVER_ERROR"))
+        ));
+        double client = positive(metricStatistic(
+                "http.server.requests",
+                "COUNT",
+                List.of(tag("uri", uri), tag("outcome", "CLIENT_ERROR"))
+        ));
+        double byOutcome = server + client;
+        if (byOutcome > 0) {
+            return byOutcome;
+        }
+
+        // Fallback when outcome tags are missing: any 4xx / 5xx status.
+        double byStatus = 0;
+        for (String status : List.of(
+                "400", "401", "403", "404", "405", "408", "409", "415", "422", "429",
+                "500", "501", "502", "503", "504")) {
+            double part = metricStatistic(
+                    "http.server.requests",
+                    "COUNT",
+                    List.of(tag("uri", uri), tag("status", status))
+            );
+            if (part > 0) {
+                byStatus += part;
+            }
+        }
+        return byStatus;
     }
 
     private ApmSnapshot unreachableSnapshot(
@@ -261,87 +368,6 @@ public class RemoteApmCollector {
             }
         }
         return new ApmSnapshot.HealthStats(status, components);
-    }
-
-    private RequestBundle readRequests() {
-        double total = metricStatistic("http.server.requests", "COUNT");
-        double totalTimeSec = metricStatistic("http.server.requests", "TOTAL_TIME");
-        double maxSec = metricStatistic("http.server.requests", "MAX");
-        double errors = 0;
-        for (String status : List.of("500", "501", "502", "503", "504")) {
-            double part = metricStatistic("http.server.requests", "COUNT", "status", status);
-            if (part > 0) {
-                errors += part;
-            }
-        }
-        double outcomeErrors = metricStatistic("http.server.requests", "COUNT", "outcome", "SERVER_ERROR");
-        if (outcomeErrors > errors) {
-            errors = outcomeErrors;
-        }
-
-        // Remove Actuator scrape traffic that dominates http.server.requests on the target.
-        NoiseTraffic noise = measureNoiseTraffic();
-        total = Math.max(0, total - noise.count);
-        totalTimeSec = Math.max(0, totalTimeSec - noise.totalTimeSec);
-        errors = Math.max(0, errors - noise.errors);
-
-        Instant now = Instant.now();
-        RequestCounters current = new RequestCounters((long) Math.max(0, total), (long) Math.max(0, errors), Math.max(0, totalTimeSec) * 1000.0);
-        Instant previousAt = previousSampleAt.get();
-        double avgMs = total > 0 ? round2((totalTimeSec * 1000.0) / total) : 0.0;
-        double maxMs = maxSec > 0 ? round2(maxSec * 1000.0) : avgMs;
-
-        if (previousAt == null) {
-            previousCounters.set(current);
-            previousSampleAt.set(now);
-            return new RequestBundle(new ApmSnapshot.RequestStats(current.total, current.errors, 0, 0, 0, 0, avgMs), maxMs);
-        }
-
-        RequestCounters previous = previousCounters.get();
-        long reqDelta = Math.max(0, current.total - previous.total);
-        long errDelta = Math.max(0, current.errors - previous.errors);
-        double seconds = Math.max(1.0, (now.toEpochMilli() - previousAt.toEpochMilli()) / 1000.0);
-        double rpm = round2(reqDelta / (seconds / 60.0));
-        double errorRate = reqDelta > 0 ? round2((errDelta * 100.0) / reqDelta) : 0.0;
-
-        previousCounters.set(current);
-        previousSampleAt.set(now);
-        return new RequestBundle(
-                new ApmSnapshot.RequestStats(current.total, current.errors, reqDelta, errDelta, rpm, errorRate, avgMs),
-                maxMs
-        );
-    }
-
-    private NoiseTraffic measureNoiseTraffic() {
-        Optional<JsonNode> root = client.getJson("/metrics/http.server.requests");
-        if (root.isEmpty()) {
-            return NoiseTraffic.ZERO;
-        }
-        double count = 0;
-        double totalTimeSec = 0;
-        double errors = 0;
-        for (String uri : tagValues(root.get(), "uri")) {
-            if (ApmUriFilters.isAppUri(uri)) {
-                continue;
-            }
-            double c = metricStatistic("http.server.requests", "COUNT", "uri", uri);
-            if (c > 0) {
-                count += c;
-            }
-            double t = metricStatistic("http.server.requests", "TOTAL_TIME", "uri", uri);
-            if (t > 0) {
-                totalTimeSec += t;
-            }
-            double e = metricStatistic(
-                    "http.server.requests",
-                    "COUNT",
-                    List.of(tag("uri", uri), tag("outcome", "SERVER_ERROR"))
-            );
-            if (e > 0) {
-                errors += e;
-            }
-        }
-        return new NoiseTraffic(count, totalTimeSec, errors);
     }
 
     private List<ApmSnapshot.ThreadStack> readStacks(int limit, int frameLimit) {
@@ -404,6 +430,26 @@ public class RemoteApmCollector {
         return metricStatistic(name, statistic, List.of(tag(tagKey, tagValue)));
     }
 
+    private double metricTimeSeconds(String name) {
+        return metricTimeSeconds(name, null, null);
+    }
+
+    private double metricTimeSeconds(String name, String tagKey, String tagValue) {
+        List<String> tags = (tagKey == null || tagValue == null)
+                ? List.of()
+                : List.of(tag(tagKey, tagValue));
+        double totalTime = metricStatistic(name, "TOTAL_TIME", tags);
+        if (totalTime >= 0 && !Double.isNaN(totalTime)) {
+            return totalTime;
+        }
+        // Some registries expose TOTAL instead of TOTAL_TIME.
+        double total = metricStatistic(name, "TOTAL", tags);
+        if (total >= 0 && !Double.isNaN(total)) {
+            return total;
+        }
+        return 0;
+    }
+
     private double metricStatistic(String name, String statistic, List<String> tags) {
         StringBuilder path = new StringBuilder("/metrics/").append(name);
         if (tags != null && !tags.isEmpty()) {
@@ -419,19 +465,31 @@ public class RemoteApmCollector {
         if (node.isEmpty()) {
             return -1;
         }
-        JsonNode measurements = node.get().get("measurements");
+        return measurement(node.get(), statistic);
+    }
+
+    private static double measurement(JsonNode metricNode, String statistic) {
+        JsonNode measurements = metricNode.get("measurements");
         if (measurements == null || !measurements.isArray()) {
             return -1;
         }
         for (JsonNode measurement : measurements) {
             if (statistic.equalsIgnoreCase(text(measurement, "statistic", ""))) {
-                return measurement.path("value").asDouble(-1);
+                double value = measurement.path("value").asDouble(Double.NaN);
+                if (Double.isNaN(value) || Double.isInfinite(value)) {
+                    return -1;
+                }
+                return value;
             }
         }
-        if (!measurements.isEmpty()) {
-            return measurements.get(0).path("value").asDouble(-1);
-        }
         return -1;
+    }
+
+    private static double positive(double value) {
+        if (Double.isNaN(value) || Double.isInfinite(value) || value < 0) {
+            return 0;
+        }
+        return value;
     }
 
     private static String tag(String key, String value) {
@@ -501,9 +559,5 @@ public class RemoteApmCollector {
     }
 
     private record RequestBundle(ApmSnapshot.RequestStats requests, double maxMs) {
-    }
-
-    private record NoiseTraffic(double count, double totalTimeSec, double errors) {
-        static final NoiseTraffic ZERO = new NoiseTraffic(0, 0, 0);
     }
 }

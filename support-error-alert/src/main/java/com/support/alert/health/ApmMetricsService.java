@@ -43,6 +43,7 @@ public class ApmMetricsService {
     private final List<ApmSnapshot.MetricSample> recentSamples = new ArrayList<>();
     private final AtomicReference<RequestCounters> previousCounters = new AtomicReference<>(RequestCounters.ZERO);
     private final AtomicReference<Instant> previousSampleAt = new AtomicReference<>(null);
+    private final RpmWindow rpmWindow = new RpmWindow(300_000L);
 
     public ApmMetricsService(
             @Value("${spring.application.name:support-error-alert}") String localServiceName,
@@ -162,8 +163,7 @@ public class ApmMetricsService {
             agg.maxMs = Math.max(agg.maxMs, timer.max(TimeUnit.MILLISECONDS));
             String status = timer.getId().getTag("status");
             String outcome = timer.getId().getTag("outcome");
-            if ((status != null && status.startsWith("5"))
-                    || (outcome != null && "SERVER_ERROR".equalsIgnoreCase(outcome))) {
+            if (isHttpError(status, outcome)) {
                 agg.errors += count;
             }
         }
@@ -294,15 +294,17 @@ public class ApmMetricsService {
         double totalMs = 0;
         double maxMs = 0;
         for (Timer timer : timers) {
+            String uri = timer.getId().getTag("uri");
+            if (ApmUriFilters.isNoiseUri(uri)) {
+                continue;
+            }
             long count = timer.count();
             total += count;
             totalMs += timer.totalTime(TimeUnit.MILLISECONDS);
             maxMs = Math.max(maxMs, timer.max(TimeUnit.MILLISECONDS));
             String status = timer.getId().getTag("status");
             String outcome = timer.getId().getTag("outcome");
-            boolean serverError = status != null && status.startsWith("5");
-            boolean failedOutcome = outcome != null && "SERVER_ERROR".equalsIgnoreCase(outcome);
-            if (serverError || failedOutcome) {
+            if (isHttpError(status, outcome)) {
                 errors += count;
             }
         }
@@ -311,19 +313,24 @@ public class ApmMetricsService {
         RequestCounters current = new RequestCounters(total, errors, totalMs);
         Instant previousAt = previousSampleAt.get();
         double avgMs = total > 0 ? round2(totalMs / total) : 0.0;
+        double overallErrorRate = total > 0 ? round2((errors * 100.0) / total) : 0.0;
 
-        if (previousAt == null) {
+        if (previousAt == null || current.total < previousCounters.get().total) {
             previousCounters.set(current);
             previousSampleAt.set(now);
-            return new RequestBundle(new ApmSnapshot.RequestStats(total, errors, 0, 0, 0, 0, avgMs), round2(maxMs));
+            rpmWindow.clear();
+            rpmWindow.observe(now.toEpochMilli(), total);
+            return new RequestBundle(
+                    new ApmSnapshot.RequestStats(total, errors, 0, 0, 0, overallErrorRate, avgMs),
+                    round2(maxMs)
+            );
         }
 
         RequestCounters previous = previousCounters.get();
         long reqDelta = Math.max(0, current.total - previous.total);
         long errDelta = Math.max(0, current.errors - previous.errors);
-        double seconds = Math.max(1.0, (now.toEpochMilli() - previousAt.toEpochMilli()) / 1000.0);
-        double rpm = round2(reqDelta / (seconds / 60.0));
-        double errorRate = reqDelta > 0 ? round2((errDelta * 100.0) / reqDelta) : 0.0;
+        double rpm = rpmWindow.observe(now.toEpochMilli(), total);
+        double errorRate = reqDelta > 0 ? round2((errDelta * 100.0) / reqDelta) : overallErrorRate;
 
         previousCounters.set(current);
         previousSampleAt.set(now);
@@ -386,6 +393,18 @@ public class ApmMetricsService {
 
     private static double round1(double value) {
         return Math.round(value * 10.0) / 10.0;
+    }
+
+    private static boolean isHttpError(String status, String outcome) {
+        if (outcome != null
+                && ("SERVER_ERROR".equalsIgnoreCase(outcome) || "CLIENT_ERROR".equalsIgnoreCase(outcome))) {
+            return true;
+        }
+        if (status != null && status.length() >= 1) {
+            char c = status.charAt(0);
+            return c == '4' || c == '5';
+        }
+        return false;
     }
 
     private static double round2(double value) {

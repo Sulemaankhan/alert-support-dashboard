@@ -3,6 +3,7 @@ import * as healthService from '../services/healthService.js';
 
 const POLL_INTERVAL_MS = 3000;
 const TOAST_TTL_MS = 8000;
+const ALERTS_RECONNECT_MS = 1500;
 
 function formatError(e) {
   return e instanceof Error ? e.message : String(e);
@@ -10,6 +11,20 @@ function formatError(e) {
 
 function alertKey(alert) {
   return `${alert?.code ?? ''}|${alert?.timestamp ?? ''}|${alert?.message ?? ''}`;
+}
+
+/** Active conditions derived from a snapshot when the alerts stream is late/idle. */
+function countActiveFromSnapshot(snapshot) {
+  if (!snapshot) return 0;
+  let count = 0;
+  const status = String(snapshot.status || '').toUpperCase();
+  if (status === 'DOWN' || status === 'DEGRADED') count += 1;
+  if (String(snapshot.probes?.liveness || '').toUpperCase() === 'DOWN') count += 1;
+  if (String(snapshot.probes?.readiness || '').toUpperCase() === 'DOWN') count += 1;
+  if (Number(snapshot.heap?.usedPercent) >= 85) count += 1;
+  if (Number(snapshot.requests?.errorRatePercent) >= 5) count += 1;
+  if (snapshot.apdex != null && Number(snapshot.apdex.score) < 0.7) count += 1;
+  return count;
 }
 
 /**
@@ -23,6 +38,8 @@ export function useHealthCheck({ enabled = true } = {}) {
   const [metrics, setMetrics] = useState(null);
   /** @type {[import('../services/healthService.js').ApmAlertEvent[], import('react').Dispatch<any>]} */
   const [alerts, setAlerts] = useState([]);
+  /** @type {[import('../services/healthService.js').ApmAlertEvent[], import('react').Dispatch<any>]} */
+  const [activeAlerts, setActiveAlerts] = useState([]);
   const [activeAlertCount, setActiveAlertCount] = useState(0);
   /** @type {[import('../services/healthService.js').ApmAlertEvent | null, import('react').Dispatch<any>]} */
   const [alertToast, setAlertToast] = useState(null);
@@ -64,54 +81,65 @@ export function useHealthCheck({ enabled = true } = {}) {
     }, TOAST_TTL_MS);
   }, []);
 
+  const syncActiveFromSnapshot = useCallback((/** @type {import('../services/healthService.js').ApmSnapshot | null | undefined} */ data) => {
+    if (!data) return;
+    setActiveAlertCount(countActiveFromSnapshot(data));
+  }, []);
+
   const applySnapshot = useCallback((/** @type {import('../services/healthService.js').ApmSnapshot} */ data) => {
     if (!mounted.current || pausedRef.current) return;
     setSnapshot(data);
     if (Array.isArray(data.alerts)) setAlerts(data.alerts);
+    syncActiveFromSnapshot(data);
     setError(null);
     setLoading(false);
-  }, []);
+  }, [syncActiveFromSnapshot]);
 
   const applyMetrics = useCallback((/** @type {import('../services/healthService.js').ApmMetricsView} */ data) => {
     if (!mounted.current || pausedRef.current) return;
     setMetrics(data);
     setMetricsTick((n) => n + 1);
     setSnapshot((prev) => {
-      if (!prev) {
-        return {
-          ...data,
-          nonHeap: prev?.nonHeap ?? { usedBytes: 0, committedBytes: 0, maxBytes: 0, usedPercent: 0 },
-          gc: prev?.gc ?? { collectionCount: 0, collectionTimeMs: 0 },
-          health: prev?.health ?? { status: data.status, components: {} },
-          probes: prev?.probes ?? { liveness: 'UNKNOWN', readiness: 'UNKNOWN' },
-          alerts: prev?.alerts ?? [],
-          topStacks: prev?.topStacks ?? [],
-        };
-      }
-      return {
-        ...prev,
-        status: data.status ?? prev.status,
-        timestamp: data.timestamp ?? prev.timestamp,
-        serviceName: data.serviceName ?? prev.serviceName,
-        targetUrl: data.targetUrl ?? prev.targetUrl,
-        source: data.source ?? prev.source,
-        uptimeMs: data.uptimeMs ?? prev.uptimeMs,
-        load: data.load ?? prev.load,
-        heap: data.heap ?? prev.heap,
-        threads: data.threads ?? prev.threads,
-        requests: data.requests ?? prev.requests,
-        latency: data.latency ?? prev.latency,
-        apdex: data.apdex ?? prev.apdex,
-        transactions: data.transactions ?? prev.transactions,
-        recentSamples: data.recentSamples ?? prev.recentSamples,
-      };
+      const next = !prev
+        ? {
+            ...data,
+            nonHeap: { usedBytes: 0, committedBytes: 0, maxBytes: 0, usedPercent: 0 },
+            gc: { collectionCount: 0, collectionTimeMs: 0 },
+            health: { status: data.status, components: {} },
+            probes: { liveness: 'UNKNOWN', readiness: 'UNKNOWN' },
+            alerts: [],
+            topStacks: [],
+          }
+        : {
+            ...prev,
+            status: data.status ?? prev.status,
+            timestamp: data.timestamp ?? prev.timestamp,
+            serviceName: data.serviceName ?? prev.serviceName,
+            targetUrl: data.targetUrl ?? prev.targetUrl,
+            source: data.source ?? prev.source,
+            uptimeMs: data.uptimeMs ?? prev.uptimeMs,
+            load: data.load ?? prev.load,
+            heap: data.heap ?? prev.heap,
+            threads: data.threads ?? prev.threads,
+            requests: data.requests ?? prev.requests,
+            latency: data.latency ?? prev.latency,
+            apdex: data.apdex ?? prev.apdex,
+            transactions: data.transactions ?? prev.transactions,
+            recentSamples: data.recentSamples ?? prev.recentSamples,
+          };
+      syncActiveFromSnapshot(next);
+      return next;
     });
-  }, []);
+  }, [syncActiveFromSnapshot]);
 
   const applyAlertsView = useCallback((/** @type {import('../services/healthService.js').ApmAlertsView} */ data) => {
     if (!mounted.current || pausedRef.current) return;
     if (Array.isArray(data.alerts)) setAlerts(data.alerts);
-    setActiveAlertCount(Number(data.activeCount) || 0);
+    if (Array.isArray(data.active)) setActiveAlerts(data.active);
+    const count = Number(data.activeCount);
+    if (Number.isFinite(count)) {
+      setActiveAlertCount(count);
+    }
     setSnapshot((prev) => (prev ? { ...prev, alerts: data.alerts ?? prev.alerts, status: data.status || prev.status } : prev));
     if (Array.isArray(data.latest)) {
       data.latest.forEach((alert) => {
@@ -146,9 +174,13 @@ export function useHealthCheck({ enabled = true } = {}) {
       if (metricsView) setMetrics(metricsView);
       if (alertsView) {
         setAlerts(alertsView.alerts ?? []);
-        setActiveAlertCount(Number(alertsView.activeCount) || 0);
+        if (Array.isArray(alertsView.active)) setActiveAlerts(alertsView.active);
+        setActiveAlertCount(Number(alertsView.activeCount) || countActiveFromSnapshot(snap));
       } else if (Array.isArray(snap.alerts)) {
         setAlerts(snap.alerts);
+        setActiveAlertCount(countActiveFromSnapshot(snap));
+      } else {
+        setActiveAlertCount(countActiveFromSnapshot(snap));
       }
       setError(null);
       setLoading(false);
@@ -195,10 +227,12 @@ export function useHealthCheck({ enabled = true } = {}) {
     let closeAlerts = /** @type {null | (() => void)} */ (null);
     let pollTimer = /** @type {ReturnType<typeof setInterval> | null} */ (null);
     let fallbackTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
+    let alertsRetryTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
     let usingPoll = false;
+    let stopped = false;
 
     const startPolling = () => {
-      if (usingPoll) return;
+      if (usingPoll || stopped) return;
       usingPoll = true;
       setMode('poll');
       setLive(true);
@@ -210,7 +244,32 @@ export function useHealthCheck({ enabled = true } = {}) {
       }, POLL_INTERVAL_MS);
     };
 
+    const startAlertsStream = () => {
+      if (stopped || usingPoll) return;
+      if (closeAlerts) {
+        closeAlerts();
+        closeAlerts = null;
+      }
+      closeAlerts = healthService.subscribeAlertsStream({
+        onAlerts: (data) => {
+          setAlertsLive(true);
+          applyAlertsView(data);
+        },
+        onAlert: onAlertPush,
+        onError: () => {
+          setAlertsLive(false);
+          if (stopped || usingPoll) return;
+          if (closeAlerts) {
+            closeAlerts();
+            closeAlerts = null;
+          }
+          alertsRetryTimer = setTimeout(startAlertsStream, ALERTS_RECONNECT_MS);
+        },
+      });
+    };
+
     const startStreams = () => {
+      if (stopped) return;
       setMode('sse');
 
       closeApm = healthService.subscribeApmStream({
@@ -243,24 +302,22 @@ export function useHealthCheck({ enabled = true } = {}) {
         onError: () => setMetricsLive(false),
       });
 
-      closeAlerts = healthService.subscribeAlertsStream({
-        onAlerts: (data) => {
-          setAlertsLive(true);
-          applyAlertsView(data);
-        },
-        onAlert: onAlertPush,
-        onError: () => setAlertsLive(false),
-      });
+      startAlertsStream();
     };
 
-    startStreams();
+    // Immediate REST hydrate so Active alerts is correct before SSE events arrive.
+    refresh().finally(() => {
+      if (!stopped) startStreams();
+    });
 
     return () => {
+      stopped = true;
       if (closeApm) closeApm();
       if (closeMetrics) closeMetrics();
       if (closeAlerts) closeAlerts();
       if (pollTimer) clearInterval(pollTimer);
       if (fallbackTimer) clearTimeout(fallbackTimer);
+      if (alertsRetryTimer) clearTimeout(alertsRetryTimer);
       setLive(false);
       setMetricsLive(false);
       setAlertsLive(false);
@@ -274,6 +331,7 @@ export function useHealthCheck({ enabled = true } = {}) {
     snapshot,
     metrics,
     alerts,
+    activeAlerts,
     activeAlertCount,
     alertToast,
     fullStacks,

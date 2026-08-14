@@ -31,6 +31,27 @@ public class HealthCheckProperties {
     /** Max URI transactions to scrape/display. */
     private int maxTransactions = 12;
 
+    /**
+     * When true, email APM alert metrics to {@link #alertEmailTo} when conditions open
+     * (requires {@code spring.mail.*}).
+     */
+    private boolean alertEmailEnabled = true;
+
+    /** Recipient for APM alert metric emails. */
+    private String alertEmailTo = "emailsupportd13@gmail.com";
+
+    /** Optional From override; falls back to {@code spring.mail.username}. */
+    private String alertEmailFrom = "";
+
+    /** Minimum minutes between emails for the same alert code. */
+    private int alertEmailCooldownMinutes = 15;
+
+    /**
+     * How often to evaluate/email when no UI SSE clients are connected (milliseconds).
+     * Full realtime tick still uses {@code support.healthcheck.realtime-interval-ms}.
+     */
+    private long alertEmailPollIntervalMs = 15_000L;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -85,6 +106,50 @@ public class HealthCheckProperties {
 
     public void setMaxTransactions(int maxTransactions) {
         this.maxTransactions = maxTransactions;
+    }
+
+    public boolean isAlertEmailEnabled() {
+        return alertEmailEnabled;
+    }
+
+    public void setAlertEmailEnabled(boolean alertEmailEnabled) {
+        this.alertEmailEnabled = alertEmailEnabled;
+    }
+
+    public String getAlertEmailTo() {
+        return alertEmailTo;
+    }
+
+    public void setAlertEmailTo(String alertEmailTo) {
+        this.alertEmailTo = alertEmailTo;
+    }
+
+    public String getAlertEmailFrom() {
+        return alertEmailFrom;
+    }
+
+    public void setAlertEmailFrom(String alertEmailFrom) {
+        this.alertEmailFrom = alertEmailFrom;
+    }
+
+    public int getAlertEmailCooldownMinutes() {
+        return alertEmailCooldownMinutes;
+    }
+
+    public void setAlertEmailCooldownMinutes(int alertEmailCooldownMinutes) {
+        this.alertEmailCooldownMinutes = alertEmailCooldownMinutes;
+    }
+
+    public long getAlertEmailPollIntervalMs() {
+        return alertEmailPollIntervalMs;
+    }
+
+    public void setAlertEmailPollIntervalMs(long alertEmailPollIntervalMs) {
+        this.alertEmailPollIntervalMs = alertEmailPollIntervalMs;
+    }
+
+    public boolean isAlertEmailConfigured() {
+        return alertEmailEnabled && alertEmailTo != null && !alertEmailTo.isBlank();
     }
 
     public boolean isRemoteConfigured() {

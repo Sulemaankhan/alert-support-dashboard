@@ -24,6 +24,6 @@ export const SECTION = {
   HEALTH: {
     title: 'HealthCheck',
     loadHint:
-      'Realtime APM with live metrics and alert streams for the configured Actuator target.',
+      'Live APM for your Actuator target — throughput, errors, latency, and alerts update in realtime.',
   },
 };

@@ -96,6 +96,7 @@ import { request } from './httpClient.js';
  * @property {string} serviceName
  * @property {string} status
  * @property {number} activeCount
+ * @property {ApmAlertEvent[]} [active]
  * @property {ApmAlertEvent[]} alerts
  * @property {ApmAlertEvent[]} latest
  */

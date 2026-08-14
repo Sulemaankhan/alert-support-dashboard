@@ -87,6 +87,7 @@ export function Dashboard({ guestMode = false }) {
           <HealthCheckPanel
             snapshot={health.snapshot}
             alerts={health.alerts}
+            activeAlerts={health.activeAlerts}
             alertToast={health.alertToast}
             activeAlertCount={health.activeAlertCount}
             fullStacks={health.fullStacks}

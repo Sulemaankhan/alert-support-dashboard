@@ -28,6 +28,8 @@ public class ApmRealtimeHub {
 
     private final ApmMetricsService apmMetricsService;
     private final ApmAlertTracker alertTracker;
+    private final ApmAlertMailService alertMailService;
+    private final HealthCheckProperties healthCheckProperties;
 
     private final List<SseEmitter> apmEmitters = new CopyOnWriteArrayList<>();
     private final List<SseEmitter> metricsEmitters = new CopyOnWriteArrayList<>();
@@ -38,9 +40,15 @@ public class ApmRealtimeHub {
     private final AtomicReference<ApmAlertsView> latestAlerts = new AtomicReference<>(emptyAlerts());
     private final AtomicReference<Set<String>> knownAlertKeys = new AtomicReference<>(Set.of());
 
-    public ApmRealtimeHub(ApmMetricsService apmMetricsService, ApmAlertTracker alertTracker) {
+    public ApmRealtimeHub(
+            ApmMetricsService apmMetricsService,
+            ApmAlertTracker alertTracker,
+            ApmAlertMailService alertMailService,
+            HealthCheckProperties healthCheckProperties) {
         this.apmMetricsService = apmMetricsService;
         this.alertTracker = alertTracker;
+        this.alertMailService = alertMailService;
+        this.healthCheckProperties = healthCheckProperties;
     }
 
     public SseEmitter subscribeApm() {
@@ -58,41 +66,103 @@ public class ApmRealtimeHub {
 
     public SseEmitter subscribeAlerts() {
         SseEmitter emitter = register(alertEmitters);
-        sendQuiet(emitter, "alerts", latestAlerts.get());
+        // Always push a fresh view (never the blank bootstrap placeholder).
+        sendQuiet(emitter, "alerts", currentAlerts());
         return emitter;
     }
 
     public ApmMetricsView currentMetrics() {
         ApmMetricsView cached = latestMetrics.get();
-        if (cached != null) {
+        if (cached != null && !isStale(cached.timestamp())) {
             return cached;
         }
-        return ApmMetricsView.from(apmMetricsService.snapshot(false));
+        ApmSnapshot snapshot = refreshSnapshot(false);
+        return ApmMetricsView.from(snapshot);
     }
 
     public ApmAlertsView currentAlerts() {
-        return latestAlerts.get();
+        ApmAlertsView cached = latestAlerts.get();
+        if (cached != null
+                && cached.timestamp() != null
+                && !isStale(cached.timestamp())
+                && cached.serviceName() != null
+                && !cached.serviceName().isBlank()) {
+            return cached;
+        }
+        ApmSnapshot snapshot = currentSnapshot();
+        ApmAlertsView view = buildAlertsView(snapshot, List.of());
+        latestAlerts.set(view);
+        return view;
     }
 
     public ApmSnapshot currentSnapshot() {
         ApmSnapshot cached = latestSnapshot.get();
-        if (cached != null) {
+        if (cached != null && !isStale(cached.timestamp())) {
             return cached;
         }
-        return apmMetricsService.snapshot(true);
+        return refreshSnapshot(true);
+    }
+
+    private ApmSnapshot refreshSnapshot(boolean includeStacks) {
+        ApmSnapshot snapshot = apmMetricsService.snapshot(includeStacks);
+        latestSnapshot.set(snapshot);
+        latestMetrics.set(ApmMetricsView.from(snapshot));
+        latestAlerts.set(buildAlertsView(snapshot, List.of()));
+        return snapshot;
+    }
+
+    private ApmAlertsView buildAlertsView(ApmSnapshot snapshot, List<ApmSnapshot.AlertEvent> newest) {
+        List<ApmSnapshot.AlertEvent> history = snapshot.alerts() != null
+                ? snapshot.alerts()
+                : alertTracker.recent();
+        List<ApmSnapshot.AlertEvent> active = alertTracker.activeConditions(snapshot);
+        return new ApmAlertsView(
+                Instant.now(),
+                snapshot.serviceName() != null ? snapshot.serviceName() : "",
+                snapshot.status() != null ? snapshot.status() : "UNKNOWN",
+                active.size(),
+                active,
+                history,
+                newest != null ? newest : List.of()
+        );
+    }
+
+    private static boolean isStale(Instant timestamp) {
+        if (timestamp == null) {
+            return true;
+        }
+        return Instant.now().toEpochMilli() - timestamp.toEpochMilli() > 2_000L;
     }
 
     @Scheduled(fixedDelayString = "${support.healthcheck.realtime-interval-ms:1000}")
     public void tick() {
-        if (apmEmitters.isEmpty() && metricsEmitters.isEmpty() && alertEmitters.isEmpty()) {
-            // Still evaluate periodically so alert history accumulates when UI reconnects quickly.
-            // Keep it light: only scrape when someone is listening OR every ~5th idle skip... 
-            // Actually user wants realtime when watching; skip scrape with zero listeners to reduce load.
+        boolean hasListeners = !apmEmitters.isEmpty() || !metricsEmitters.isEmpty() || !alertEmitters.isEmpty();
+        if (!hasListeners) {
+            // Email poll runs on its own schedule when the UI is closed.
             return;
         }
+        scrapeAndFanOut(true);
+    }
 
+    /**
+     * Evaluates APM + emails alert metrics even when no UI SSE clients are connected.
+     */
+    @Scheduled(fixedDelayString = "${support.healthcheck.alert-email-poll-interval-ms:15000}")
+    public void emailWatchTick() {
+        if (!healthCheckProperties.isAlertEmailConfigured()) {
+            return;
+        }
+        boolean hasListeners = !apmEmitters.isEmpty() || !metricsEmitters.isEmpty() || !alertEmitters.isEmpty();
+        if (hasListeners) {
+            // Live tick already emails on the same scrape.
+            return;
+        }
+        scrapeAndFanOut(false);
+    }
+
+    private void scrapeAndFanOut(boolean includeStacksIfNeeded) {
         try {
-            boolean needStacks = !apmEmitters.isEmpty();
+            boolean needStacks = includeStacksIfNeeded && !apmEmitters.isEmpty();
             ApmSnapshot snapshot = apmMetricsService.snapshot(needStacks);
             latestSnapshot.set(snapshot);
 
@@ -101,15 +171,10 @@ public class ApmRealtimeHub {
 
             List<ApmSnapshot.AlertEvent> alerts = snapshot.alerts() != null ? snapshot.alerts() : alertTracker.recent();
             List<ApmSnapshot.AlertEvent> newest = detectNewAlerts(alerts);
-            ApmAlertsView alertsView = new ApmAlertsView(
-                    Instant.now(),
-                    snapshot.serviceName(),
-                    snapshot.status(),
-                    countActive(snapshot),
-                    alerts,
-                    newest
-            );
+            ApmAlertsView alertsView = buildAlertsView(snapshot, newest);
             latestAlerts.set(alertsView);
+
+            alertMailService.notifyActiveAlerts(snapshot, alertsView.active());
 
             broadcast(apmEmitters, "apm", snapshot);
             broadcast(metricsEmitters, "metrics", metrics);
@@ -141,23 +206,6 @@ public class ApmRealtimeHub {
 
     private String keyOf(ApmSnapshot.AlertEvent alert) {
         return alert.code() + "|" + (alert.timestamp() != null ? alert.timestamp().toString() : "") + "|" + alert.message();
-    }
-
-    private static int countActive(ApmSnapshot snapshot) {
-        int count = 0;
-        if (snapshot.heap() != null && snapshot.heap().usedPercent() >= 85) {
-            count++;
-        }
-        if (snapshot.requests() != null && snapshot.requests().errorRatePercent() >= 5) {
-            count++;
-        }
-        if (snapshot.apdex() != null && snapshot.apdex().score() < 0.7) {
-            count++;
-        }
-        if ("DOWN".equalsIgnoreCase(snapshot.status()) || "DEGRADED".equalsIgnoreCase(snapshot.status())) {
-            count++;
-        }
-        return count;
     }
 
     private SseEmitter register(List<SseEmitter> bucket) {
@@ -207,7 +255,7 @@ public class ApmRealtimeHub {
     }
 
     private static ApmAlertsView emptyAlerts() {
-        return new ApmAlertsView(Instant.now(), "", "UNKNOWN", 0, List.of(), List.of());
+        return new ApmAlertsView(Instant.now(), "", "UNKNOWN", 0, List.of(), List.of(), List.of());
     }
 
     /** For Spring MVC content type checks. */

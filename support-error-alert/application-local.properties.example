@@ -1,0 +1,15 @@
+# Copy to application-local.properties (gitignored) and fill in values.
+# Used for OTP sign-in and HealthCheck APM alert metric emails.
+
+spring.mail.host=smtp.gmail.com
+spring.mail.port=587
+spring.mail.username=YOUR_GMAIL@gmail.com
+# Gmail App Password (16 chars). Spaces are stripped automatically.
+spring.mail.password=xxxx xxxx xxxx xxxx
+spring.mail.properties.mail.smtp.auth=true
+spring.mail.properties.mail.smtp.starttls.enable=true
+spring.mail.properties.mail.smtp.starttls.required=true
+
+# Optional: override From for APM alert emails (defaults to spring.mail.username)
+# support.healthcheck.alert-email-from=YOUR_GMAIL@gmail.com
+# support.healthcheck.alert-email-to=emailsupportd13@gmail.com
