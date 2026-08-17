@@ -4,30 +4,13 @@ import { NAV_SECTION } from '../constants/nav.js';
 import './AlertSourcePanel.css';
 import './HealthCheckPanel.css';
 
-const TAB_GROUPS = [
-  {
-    label: 'Signals',
-    items: [
-      { id: 'overview', label: 'Overview' },
-      { id: 'transactions', label: 'Transactions' },
-      { id: 'latency', label: 'Latency' },
-      { id: 'errors', label: 'Errors' },
-      { id: 'alerts', label: 'Alerts' },
-    ],
-  },
-  {
-    label: 'Runtime',
-    items: [
-      { id: 'health', label: 'Health' },
-      { id: 'probes', label: 'Probes' },
-      { id: 'heap', label: 'Heap' },
-      { id: 'load', label: 'Load' },
-    ],
-  },
-  {
-    label: 'Diagnostics',
-    items: [{ id: 'stack', label: 'Stack' }],
-  },
+const APM_TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'transactions', label: 'Transactions' },
+  { id: 'latency', label: 'Latency' },
+  { id: 'errors', label: 'Errors' },
+  { id: 'alerts', label: 'Alerts' },
+  { id: 'stack', label: 'Stack' },
 ];
 
 function formatBytes(bytes) {
@@ -502,47 +485,6 @@ function Sparkline({ samples, getValue, color, floorMax = 1, height = 44, live =
         </>
       ) : null}
     </svg>
-  );
-}
-
-function MetricCard({ title, value, sub, children, tone, accent = 'blue', delay = 0, flashKey = 0 }) {
-  return (
-    <article
-      className={
-        tone
-          ? `health-metric health-metric--${accent} health-metric--${tone}`
-          : `health-metric health-metric--${accent}`
-      }
-      style={{ '--stagger': `${delay}ms` }}
-    >
-      <header className="health-metric__head">
-        <h3 className="health-metric__title">{title}</h3>
-        <span key={flashKey} className="health-metric__value mono health-metric__value--flash">
-          {value}
-        </span>
-      </header>
-      {children}
-      {sub ? <p className="health-metric__sub">{sub}</p> : null}
-    </article>
-  );
-}
-
-function SignalTile({ label, value, unit, samples, getValue, color, floorMax, warn, title }) {
-  const trend = trendFromSamples(samples, getValue);
-  return (
-    <div className={warn ? 'health-signal health-signal--warn' : 'health-signal'} title={title}>
-      <div className="health-signal__top">
-        <span className="health-signal__label">{label}</span>
-        <span className={`health-signal__trend health-signal__trend--${trend}`} aria-hidden="true">
-          {trend === 'up' ? '▲' : trend === 'down' ? '▼' : '●'}
-        </span>
-      </div>
-      <span className="health-signal__value mono">
-        {value}
-        {unit ? <small>{unit}</small> : null}
-      </span>
-      <Sparkline samples={samples} getValue={getValue} color={color} floorMax={floorMax} height={28} live />
-    </div>
   );
 }
 
@@ -1796,7 +1738,6 @@ function LatencyBoard({ snapshot, transactions, samples = [], live = false, tick
  * @param {{
  *   snapshot: import('../services/healthService.js').ApmSnapshot | null,
  *   samples: any[],
- *   transactions: any[],
  *   activeAlertCount?: number,
  *   activeAlerts?: any[],
  *   live?: boolean,
@@ -1811,7 +1752,6 @@ function LatencyBoard({ snapshot, transactions, samples = [], live = false, tick
 function MetricsLiveBoard({
   snapshot,
   samples = [],
-  transactions = [],
   activeAlertCount = 0,
   activeAlerts = [],
   live = false,
@@ -1850,7 +1790,6 @@ function MetricsLiveBoard({
   const apxTrend = trendFromSamples(samples, (s) => (s.apdex ?? 0) * 100);
 
   const rpmFloor = Math.max(10, ...samples.map((s) => Number(s.requestsPerMinute) || 0), rpm);
-  const topTx = transactions.slice(0, 4);
 
   const toneForError = errorRate >= 5 ? 'danger' : errorRate > 0 ? 'warn' : 'ok';
   const toneForHeap = heapPct >= 85 ? 'danger' : heapPct >= 70 ? 'warn' : 'ok';
@@ -2047,11 +1986,8 @@ function MetricsLiveBoard({
               </div>
               <Sparkline samples={samples} getValue={(s) => s.heapUsedPercent} color="#0f766e" height={40} live />
               <em>
-                {toneForHeap === 'danger'
-                  ? 'Critical pressure'
-                  : toneForHeap === 'warn'
-                    ? 'Elevated usage'
-                    : 'Healthy headroom'}
+                Non-heap {formatBytes(snapshot?.nonHeap?.usedBytes)} · GC {snapshot?.gc?.collectionCount ?? '—'} (
+                {snapshot?.gc?.collectionTimeMs ?? '—'} ms)
               </em>
             </div>
           </div>
@@ -2085,7 +2021,7 @@ function MetricsLiveBoard({
                 height={40}
                 live
               />
-              <em>Process load</em>
+              <em>Load avg {formatNum(snapshot?.load?.systemLoadAverage, 2)}</em>
             </div>
           </div>
         </article>
@@ -2169,51 +2105,6 @@ function MetricsLiveBoard({
           </div>
         </article>
       </div>
-
-      <div className="health-ml__top">
-        <div className="health-ml__top-head">
-          <h4 className="health-stack__title">Hottest endpoints</h4>
-          <p className="health-metric__sub">By call volume right now</p>
-        </div>
-        {!topTx.length ? (
-          <div className="health-empty health-ml__empty">
-            <p>No transaction samples yet</p>
-            <span>Hit app APIs (not /actuator) to populate live endpoint cards.</span>
-          </div>
-        ) : (
-          <ul className="health-ml__top-list">
-            {topTx.map((tx, index) => {
-              const maxCount = Math.max(1, Number(topTx[0]?.count) || 1);
-              return (
-                <li key={`ml-tx-${tx.uri}`} style={{ '--stagger': `${index * 40}ms` }}>
-                  <span className="health-ml__top-rank mono">{index + 1}</span>
-                  <div className="health-ml__top-body">
-                    <div className="health-ml__top-row">
-                      <span className="health-tx__method">{tx.method || '*'}</span>
-                      <span className="mono" title={tx.uri}>
-                        {shortUri(tx.uri)}
-                      </span>
-                      <strong className="mono">{tx.count}</strong>
-                    </div>
-                    <div className="health-ml__top-track">
-                      <i style={{ width: `${((Number(tx.count) || 0) / maxCount) * 100}%` }} />
-                    </div>
-                    <div className="health-ml__top-stats">
-                      <span>
-                        {formatNum(tx.avgMs, 0)} ms
-                      </span>
-                      <span className={tx.errorCount > 0 ? 'health-ml__top-err' : ''}>
-                        {tx.errorCount} err · {formatNum(tx.errorRatePercent, 0)}%
-                      </span>
-                      <span className={apdexClass(tx.apdex)}>Apdex {formatNum(tx.apdex, 2)}</span>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
     </div>
   );
 }
@@ -2268,6 +2159,380 @@ function RingMeter({ value, max = 100, color, label = '', display, size = 88, fl
   );
 }
 
+const ALERT_SEVERITY_COLORS = {
+  critical: '#c62828',
+  warning: '#b45309',
+  info: '#2563eb',
+};
+
+/**
+ * Graphical alerts board: severity mix, condition radar, active + history cards.
+ * @param {{
+ *   snapshot: import('../services/healthService.js').ApmSnapshot | null,
+ *   alerts?: import('../services/healthService.js').ApmAlertEvent[],
+ *   activeAlerts?: import('../services/healthService.js').ApmAlertEvent[],
+ *   activeAlertCount?: number,
+ *   live?: boolean,
+ *   tick?: number,
+ * }} props
+ */
+function AlertsBoard({
+  snapshot,
+  alerts = [],
+  activeAlerts = [],
+  activeAlertCount = 0,
+  live = false,
+  tick = 0,
+}) {
+  const [filter, setFilter] = useState(/** @type {'all' | 'critical' | 'warning' | 'info'} */ ('all'));
+  const [focus, setFocus] = useState(0);
+
+  const severityOf = (alert) => String(alert?.severity || 'info').toLowerCase();
+
+  const counts = useMemo(() => {
+    const source = activeAlerts.length ? activeAlerts : alerts;
+    const out = { critical: 0, warning: 0, info: 0 };
+    for (const alert of source) {
+      const key = severityOf(alert);
+      if (key === 'critical') out.critical += 1;
+      else if (key === 'warning') out.warning += 1;
+      else out.info += 1;
+    }
+    return out;
+  }, [activeAlerts, alerts]);
+
+  const historyFiltered = useMemo(() => {
+    if (filter === 'all') return alerts;
+    return alerts.filter((a) => severityOf(a) === filter);
+  }, [alerts, filter]);
+
+  useEffect(() => {
+    setFocus(0);
+  }, [filter, historyFiltered.length, activeAlerts.length]);
+
+  const healthStatus = snapshot?.health?.status ?? '—';
+  const heapPct = Number(snapshot?.heap?.usedPercent) || 0;
+  const errorRate = Number(snapshot?.requests?.errorRatePercent) || 0;
+  const apdex = Number(snapshot?.apdex?.score);
+  const apdexScore = Number.isFinite(apdex) ? apdex : 1;
+  const tone = activeAlertCount > 0 ? (counts.critical > 0 ? 'critical' : 'warn') : 'ok';
+
+  const conditions = [
+    {
+      id: 'health',
+      label: 'Service health',
+      threshold: 'UP',
+      value: healthStatus,
+      display: healthStatus,
+      ok: String(healthStatus).toUpperCase() === 'UP',
+      meter: String(healthStatus).toUpperCase() === 'UP' ? 100 : 35,
+      color: String(healthStatus).toUpperCase() === 'UP' ? '#16a34a' : '#c62828',
+    },
+    {
+      id: 'heap',
+      label: 'Heap pressure',
+      threshold: '< 85%',
+      value: heapPct,
+      display: `${formatNum(heapPct, 1)}%`,
+      ok: heapPct < 85,
+      meter: Math.min(100, heapPct),
+      color: heapPct >= 85 ? '#c62828' : heapPct >= 70 ? '#b45309' : '#16a34a',
+    },
+    {
+      id: 'errors',
+      label: 'Error rate',
+      threshold: '< 5%',
+      value: errorRate,
+      display: `${formatNum(errorRate, 1)}%`,
+      ok: errorRate < 5,
+      meter: Math.min(100, (errorRate / 5) * 100),
+      color: errorRate >= 5 ? '#c62828' : errorRate > 0 ? '#b45309' : '#16a34a',
+    },
+    {
+      id: 'apdex',
+      label: 'Apdex score',
+      threshold: '≥ 0.70',
+      value: apdexScore,
+      display: formatNum(apdexScore, 2),
+      ok: apdexScore >= 0.7,
+      meter: Math.max(0, Math.min(100, apdexScore * 100)),
+      color: apdexScore < 0.7 ? '#c62828' : apdexScore < 0.85 ? '#b45309' : '#16a34a',
+    },
+  ];
+
+  const failing = conditions.filter((c) => !c.ok).length;
+  const mixTotal = Math.max(1, counts.critical + counts.warning + counts.info);
+  const critSweep = (counts.critical / mixTotal) * 360;
+  const warnSweep = (counts.warning / mixTotal) * 360;
+  const infoSweep = (counts.info / mixTotal) * 360;
+  const hasAny = activeAlerts.length > 0 || alerts.length > 0;
+  const focused =
+    historyFiltered[Math.min(focus, Math.max(0, historyFiltered.length - 1))] ||
+    activeAlerts[0] ||
+    null;
+
+  return (
+    <div className={`health-al health-al--${tone}`}>
+      <div className="health-al__toolbar">
+        <div>
+          <h3 className="health-stack__title">Alert intelligence</h3>
+          <p className="health-metric__sub">
+            Active {activeAlertCount} · history {alerts.length} · {formatRelative(snapshot?.timestamp)}
+          </p>
+        </div>
+        <span className={live ? 'health-live health-live--on' : 'health-live health-live--off'}>
+          <span className="health-live__dot" aria-hidden="true" />
+          {live ? 'Live feed' : 'Waiting…'}
+        </span>
+      </div>
+
+      <div className="health-al__kpis">
+        <div className={`health-al__kpi health-al__kpi--active health-al__kpi--${tone}`}>
+          <span>Active</span>
+          <strong className="mono" key={`act-${tick}`}>
+            {activeAlertCount}
+          </strong>
+          <em>{activeAlertCount ? 'conditions firing' : 'all clear'}</em>
+        </div>
+        <div className="health-al__kpi">
+          <span>Critical</span>
+          <strong className="mono">{counts.critical}</strong>
+          <em>highest severity</em>
+        </div>
+        <div className="health-al__kpi">
+          <span>Warning</span>
+          <strong className="mono">{counts.warning}</strong>
+          <em>needs attention</em>
+        </div>
+        <div className="health-al__kpi">
+          <span>History</span>
+          <strong className="mono">{alerts.length}</strong>
+          <em>{failing} thresholds hot</em>
+        </div>
+      </div>
+
+      <div className="health-al__visuals">
+        <article className="health-al__panel">
+          <header className="health-al__panel-head">
+            <h4>Severity mix</h4>
+            <span>{activeAlerts.length ? 'active set' : 'recent history'}</span>
+          </header>
+          <div className="health-al__mix">
+            <svg className="health-al__mix-donut" viewBox="0 0 160 160" aria-hidden="true">
+              <circle cx="80" cy="80" r="58" fill="none" stroke="#e8edf3" strokeWidth="26" />
+              {hasAny ? (
+                <>
+                  <path d={donutArcPath(80, 80, 0, critSweep, 45, 71, -90)} fill={ALERT_SEVERITY_COLORS.critical} />
+                  <path
+                    d={donutArcPath(80, 80, critSweep, warnSweep, 45, 71, -90)}
+                    fill={ALERT_SEVERITY_COLORS.warning}
+                  />
+                  <path
+                    d={donutArcPath(80, 80, critSweep + warnSweep, infoSweep, 45, 71, -90)}
+                    fill={ALERT_SEVERITY_COLORS.info}
+                  />
+                </>
+              ) : null}
+              <circle cx="80" cy="80" r="36" fill="#fff" />
+              <text x="80" y="78" textAnchor="middle" className="health-al__mix-value">
+                {activeAlertCount}
+              </text>
+              <text x="80" y="94" textAnchor="middle" className="health-al__mix-label">
+                active
+              </text>
+            </svg>
+            <ul className="health-al__mix-legend">
+              <li>
+                <span className="health-al__dot health-al__dot--critical" />
+                Critical
+                <strong className="mono">{counts.critical}</strong>
+              </li>
+              <li>
+                <span className="health-al__dot health-al__dot--warning" />
+                Warning
+                <strong className="mono">{counts.warning}</strong>
+              </li>
+              <li>
+                <span className="health-al__dot health-al__dot--info" />
+                Info
+                <strong className="mono">{counts.info}</strong>
+              </li>
+            </ul>
+          </div>
+        </article>
+
+        <article className="health-al__panel health-al__panel--wide">
+          <header className="health-al__panel-head">
+            <h4>Condition radar</h4>
+            <span>live vs alert thresholds</span>
+          </header>
+          <ul className="health-al__conditions">
+            {conditions.map((cond) => (
+              <li key={cond.id} className={cond.ok ? 'health-al__cond health-al__cond--ok' : 'health-al__cond health-al__cond--hot'}>
+                <div className="health-al__cond-top">
+                  <span>{cond.label}</span>
+                  <strong className="mono" style={{ color: cond.color }}>
+                    {cond.display}
+                  </strong>
+                </div>
+                <div className="health-al__cond-track" aria-hidden="true">
+                  <i style={{ width: `${Math.max(4, cond.meter)}%`, background: cond.color }} />
+                </div>
+                <div className="health-al__cond-foot">
+                  <em>{cond.ok ? 'Within limit' : 'Breached'}</em>
+                  <span>target {cond.threshold}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </article>
+      </div>
+
+      {activeAlerts.length ? (
+        <section className="health-al__active">
+          <div className="health-al__section-head">
+            <h4 className="health-stack__title">Firing now</h4>
+            <p className="health-metric__sub">Open conditions that need attention</p>
+          </div>
+          <ul className="health-al__cards">
+            {activeAlerts.map((alert, index) => {
+              const sev = severityOf(alert);
+              return (
+                <li
+                  key={`active-${alert.code}-${index}`}
+                  className={`health-al__card health-al__card--${sev} health-al__card--active`}
+                  style={{ '--stagger': `${index * 40}ms`, '--card-accent': ALERT_SEVERITY_COLORS[sev] || ALERT_SEVERITY_COLORS.info }}
+                >
+                  <div className="health-al__card-top">
+                    <span className={`health-al__sev health-al__sev--${sev}`}>{sev}</span>
+                    <span className="mono health-al__code">{alert.code}</span>
+                    <span className="health-al__tag">active</span>
+                  </div>
+                  <p className="health-al__msg">{alert.message}</p>
+                  <div className="health-al__card-foot">
+                    <span>{formatRelative(alert.timestamp)}</span>
+                    <span className="mono">{formatTime(alert.timestamp)}</span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
+      <section className="health-al__history">
+        <div className="health-al__section-head health-al__section-head--row">
+          <div>
+            <h4 className="health-stack__title">Alert timeline</h4>
+            <p className="health-metric__sub">Recent alert events from the stream</p>
+          </div>
+          <div className="health-tx__sort-pills" role="group" aria-label="Filter alerts">
+            {[
+              { id: 'all', label: 'All' },
+              { id: 'critical', label: 'Critical' },
+              { id: 'warning', label: 'Warning' },
+              { id: 'info', label: 'Info' },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={filter === opt.id ? 'health-tx__pill health-tx__pill--on' : 'health-tx__pill'}
+                onClick={() => setFilter(/** @type {any} */ (opt.id))}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {!hasAny ? (
+          <div className="health-empty health-al__empty">
+            <p>All quiet</p>
+            <span>
+              Alerts fire when status is DEGRADED/DOWN, heap ≥ 85%, error rate ≥ 5%, or Apdex &lt; 0.7.
+            </span>
+          </div>
+        ) : !historyFiltered.length ? (
+          <div className="health-empty health-al__empty">
+            <p>No {filter} events</p>
+            <span>Try another severity filter to browse the timeline.</span>
+          </div>
+        ) : (
+          <div className="health-al__timeline-grid">
+            <ol className="health-al__timeline">
+              {historyFiltered.slice(0, 16).map((alert, index) => {
+                const sev = severityOf(alert);
+                return (
+                  <li key={`${alert.code}-${alert.timestamp}-${index}`}>
+                    <button
+                      type="button"
+                      className={
+                        focus === index
+                          ? `health-al__tl health-al__tl--${sev} health-al__tl--on`
+                          : `health-al__tl health-al__tl--${sev}`
+                      }
+                      style={{ '--stagger': `${index * 35}ms` }}
+                      onMouseEnter={() => setFocus(index)}
+                      onClick={() => setFocus(index)}
+                    >
+                      <span className="health-al__tl-rail" aria-hidden="true" />
+                      <span className="health-al__tl-body">
+                        <span className="health-al__tl-top">
+                          <span className={`health-al__sev health-al__sev--${sev}`}>{sev}</span>
+                          <span className="mono">{alert.code}</span>
+                          {index === 0 ? <span className="health-al__tag">latest</span> : null}
+                          <span className="health-al__tl-time">{formatTime(alert.timestamp)}</span>
+                        </span>
+                        <span className="health-al__tl-msg">{alert.message}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+
+            {focused ? (
+              <article
+                className={`health-al__focus health-al__focus--${severityOf(focused)}`}
+                style={{ '--focus-color': ALERT_SEVERITY_COLORS[severityOf(focused)] || ALERT_SEVERITY_COLORS.info }}
+              >
+                <div className="health-al__focus-top">
+                  <span className={`health-al__sev health-al__sev--${severityOf(focused)}`}>
+                    {severityOf(focused)}
+                  </span>
+                  <div>
+                    <h4 className="mono">{focused.code}</h4>
+                    <p>{formatRelative(focused.timestamp)} · {formatTime(focused.timestamp)}</p>
+                  </div>
+                </div>
+                <p className="health-al__focus-msg">{focused.message}</p>
+                <div className="health-al__focus-meta">
+                  <div>
+                    <span>Severity</span>
+                    <strong>{severityOf(focused)}</strong>
+                  </div>
+                  <div>
+                    <span>Service</span>
+                    <strong>{snapshot?.serviceName ?? '—'}</strong>
+                  </div>
+                  <div>
+                    <span>Health</span>
+                    <strong className={`health-status ${statusClass(healthStatus)}`}>{healthStatus}</strong>
+                  </div>
+                  <div>
+                    <span>Open now</span>
+                    <strong className="mono">{activeAlertCount}</strong>
+                  </div>
+                </div>
+              </article>
+            ) : null}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 /**
  * @param {Object} props
  * @param {import('../services/healthService.js').ApmSnapshot | null} props.snapshot
@@ -2317,7 +2582,9 @@ export function HealthCheckPanel({
   const [txSort, setTxSort] = useState('count');
 
   useEffect(() => {
-    if (tab === 'metrics') setTab('overview');
+    if (['metrics', 'health', 'probes', 'heap', 'load'].includes(tab)) {
+      setTab('overview');
+    }
   }, [tab]);
   const samples = snapshot?.recentSamples ?? [];
   const status = snapshot?.status ?? (loading ? '…' : 'UNKNOWN');
@@ -2351,8 +2618,6 @@ export function HealthCheckPanel({
   }, [tab, onRefreshStack]);
 
   const isStreaming = !paused && (live || metricsLive || alertsLive);
-  const rpm = snapshot?.requests?.requestsPerMinute ?? 0;
-  const errPct = snapshot?.requests?.errorRatePercent ?? 0;
 
   return (
     <section
@@ -2469,91 +2734,27 @@ export function HealthCheckPanel({
         </div>
       ) : null}
 
-      <div className="health-signal-strip" aria-label="Key signals">
-        <SignalTile
-          label="Throughput"
-          value={formatNum(rpm, 1)}
-          unit="rpm"
-          samples={samples}
-          getValue={(s) => s.requestsPerMinute}
-          color="#2563eb"
-          floorMax={10}
-          title="App requests per minute"
-        />
-        <SignalTile
-          label="Errors"
-          value={formatNum(errPct, 1)}
-          unit="%"
-          samples={samples}
-          getValue={(s) => s.errorRatePercent}
-          color="#c62828"
-          floorMax={5}
-          warn={errPct >= 5}
-          title="HTTP 4xx/5xx error rate"
-        />
-        <SignalTile
-          label="Latency"
-          value={formatNum(snapshot?.latency?.avgMs ?? snapshot?.requests?.avgResponseTimeMs, 0)}
-          unit="ms"
-          samples={samples}
-          getValue={(s) => s.avgLatencyMs}
-          color="#b45309"
-          floorMax={50}
-          title="Average response time"
-        />
-        <SignalTile
-          label="Heap"
-          value={formatNum(snapshot?.heap?.usedPercent, 0)}
-          unit="%"
-          samples={samples}
-          getValue={(s) => s.heapUsedPercent}
-          color="#0f766e"
-          floorMax={20}
-          warn={(snapshot?.heap?.usedPercent ?? 0) >= 85}
-          title="Heap used percent"
-        />
-        <SignalTile
-          label="CPU"
-          value={
-            snapshot?.load?.processCpuLoad == null || snapshot.load.processCpuLoad < 0
-              ? '—'
-              : formatNum(snapshot.load.processCpuLoad, 1)
-          }
-          unit={snapshot?.load?.processCpuLoad == null || snapshot.load.processCpuLoad < 0 ? '' : '%'}
-          samples={samples}
-          getValue={(s) => s.processCpuLoad}
-          color="#4f46e5"
-          floorMax={10}
-          title="Process CPU"
-        />
-      </div>
-
       <nav className="health-apm-nav" aria-label="APM views">
-        {TAB_GROUPS.map((group) => (
-          <div key={group.label} className="health-apm-nav__group">
-            <span className="health-apm-nav__label">{group.label}</span>
-            <div className="health-apm-tabs" role="tablist">
-              {group.items.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === item.id}
-                  className={tab === item.id ? 'health-apm-tab health-apm-tab--active' : 'health-apm-tab'}
-                  onClick={() => setTab(item.id)}
-                >
-                  {item.label}
-                  {item.id === 'alerts' && (activeAlertCount || alerts.length) ? (
-                    <span className="health-apm-tab__count">{activeAlertCount || alerts.length}</span>
-                  ) : null}
-                  {item.id === 'overview' && metricsLive ? (
-                    <span className="health-apm-tab__live">live</span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
+        <div className="health-apm-tabs" role="tablist">
+          {APM_TABS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.id}
+              className={tab === item.id ? 'health-apm-tab health-apm-tab--active' : 'health-apm-tab'}
+              onClick={() => setTab(item.id)}
+            >
+              <span className="health-apm-tab__label">{item.label}</span>
+              {item.id === 'alerts' && (activeAlertCount || alerts.length) ? (
+                <span className="health-apm-tab__count">{activeAlertCount || alerts.length}</span>
+              ) : null}
+              {item.id === 'overview' && metricsLive ? (
+                <span className="health-apm-tab__live">live</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
       </nav>
 
       <div key={tab} className="health-tab-stage">
@@ -2561,7 +2762,6 @@ export function HealthCheckPanel({
           <MetricsLiveBoard
             snapshot={snapshot}
             samples={samples}
-            transactions={sortedTransactions}
             activeAlertCount={activeAlertCount}
             activeAlerts={activeAlerts}
             live={live}
@@ -2601,145 +2801,14 @@ export function HealthCheckPanel({
         ) : null}
 
         {tab === 'alerts' ? (
-          <div className="health-alerts">
-            <div className="health-metrics-live__head">
-              <div>
-                <h3 className="health-stack__title">Realtime alerts</h3>
-                <p className="health-metric__sub">
-                  Active {activeAlertCount} · history {alerts.length} · {formatRelative(snapshot?.timestamp)}
-                </p>
-              </div>
-              <span
-                className={
-                  (alertsLive || live || metricsLive) && !paused
-                    ? 'health-live health-live--on'
-                    : 'health-live health-live--off'
-                }
-              >
-                <span className="health-live__dot" aria-hidden="true" />
-                {(alertsLive || live || metricsLive) && !paused ? 'Live feed' : 'Waiting…'}
-              </span>
-            </div>
-            {activeAlerts.length ? (
-              <ul className="health-alerts__list" style={{ marginBottom: '1rem' }}>
-                {activeAlerts.map((alert, index) => (
-                  <li
-                    key={`active-${alert.code}-${index}`}
-                    className={`health-alert ${severityClass(alert.severity)} health-alert--fresh`}
-                  >
-                    <div className="health-alert__top">
-                      <span className="health-alert__severity">{alert.severity}</span>
-                      <span className="health-alert__code mono">{alert.code}</span>
-                      <span className="health-alert__fresh-tag">active</span>
-                    </div>
-                    <p className="health-alert__msg">{alert.message}</p>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {!alerts.length && !activeAlerts.length ? (
-              <div className="health-empty">
-                <p>All quiet</p>
-                <span>Alerts fire when status is DEGRADED/DOWN, heap ≥ 85%, error rate ≥ 5%, or Apdex &lt; 0.7.</span>
-              </div>
-            ) : alerts.length ? (
-              <ul className="health-alerts__list">
-                {alerts.map((alert, index) => (
-                  <li
-                    key={`${alert.code}-${alert.timestamp}-${index}`}
-                    className={`health-alert ${severityClass(alert.severity)} ${index === 0 ? 'health-alert--fresh' : ''}`}
-                    style={{ '--stagger': `${index * 45}ms` }}
-                  >
-                    <div className="health-alert__top">
-                      <span className="health-alert__severity">{alert.severity}</span>
-                      <span className="health-alert__code mono">{alert.code}</span>
-                      {index === 0 ? <span className="health-alert__fresh-tag">latest</span> : null}
-                      <span className="health-alert__time">{formatTime(alert.timestamp)}</span>
-                    </div>
-                    <p className="health-alert__msg">{alert.message}</p>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
-
-        {(tab === 'health' || tab === 'probes') && (
-          <div className="health-apm-grid">
-            {tab === 'health' && (
-              <MetricCard
-                title="Health"
-                value={snapshot?.health?.status ?? '—'}
-                sub={
-                  snapshot?.health?.components
-                    ? Object.entries(snapshot.health.components)
-                        .map(([k, v]) => `${k}: ${v}`)
-                        .join(' · ') || 'Actuator health components'
-                    : 'Actuator health'
-                }
-                accent="teal"
-              >
-                <span className={`health-status ${statusClass(snapshot?.health?.status)}`}>
-                  {snapshot?.health?.status ?? 'UNKNOWN'}
-                </span>
-              </MetricCard>
-            )}
-            {tab === 'probes' && (
-              <article className="health-metric health-metric--wide health-metric--slate">
-                <header className="health-metric__head">
-                  <h3 className="health-metric__title">Probes</h3>
-                </header>
-                <div className="health-probe-row">
-                  <ProbeBadge label="Liveness" status={snapshot?.probes?.liveness} />
-                  <ProbeBadge label="Readiness" status={snapshot?.probes?.readiness} />
-                </div>
-              </article>
-            )}
-          </div>
-        )}
-
-        {tab === 'heap' ? (
-          <div className="health-apm-grid">
-            <MetricCard
-              title="Heap"
-              value={snapshot ? `${formatNum(snapshot.heap.usedPercent)}%` : '—'}
-              sub={`${formatBytes(snapshot?.heap?.usedBytes)} / ${formatBytes(snapshot?.heap?.maxBytes)} · GC ${snapshot?.gc?.collectionCount ?? '—'} (${snapshot?.gc?.collectionTimeMs ?? '—'} ms)`}
-              accent="teal"
-            >
-              <div className="health-bar" aria-hidden="true">
-                <div
-                  className="health-bar__fill"
-                  style={{ width: `${Math.min(100, snapshot?.heap?.usedPercent ?? 0)}%` }}
-                />
-              </div>
-              <Sparkline samples={samples} getValue={(s) => s.heapUsedPercent} color="#0f766e" height={56} />
-            </MetricCard>
-            <MetricCard
-              title="Non-heap"
-              value={formatBytes(snapshot?.nonHeap?.usedBytes)}
-              sub={`Committed ${formatBytes(snapshot?.nonHeap?.committedBytes)}`}
-              accent="slate"
-            />
-          </div>
-        ) : null}
-
-        {tab === 'load' ? (
-          <div className="health-apm-grid">
-            <MetricCard
-              title="Process load"
-              value={formatCpu(snapshot?.load?.processCpuLoad)}
-              sub={`System ${formatCpu(snapshot?.load?.systemCpuLoad)} · load avg ${formatNum(snapshot?.load?.systemLoadAverage, 2)} · ${snapshot?.load?.availableProcessors ?? '—'} CPUs`}
-              accent="blue"
-            >
-              <Sparkline samples={samples} getValue={(s) => s.processCpuLoad} color="#2563eb" floorMax={100} height={56} />
-            </MetricCard>
-            <MetricCard
-              title="Threads"
-              value={snapshot?.threads?.live ?? '—'}
-              sub={`Runnable ${snapshot?.threads?.runnable ?? '—'} · Blocked ${snapshot?.threads?.blocked ?? '—'} · Waiting ${snapshot?.threads?.waiting ?? '—'} · Peak ${snapshot?.threads?.peak ?? '—'}`}
-              accent="slate"
-            />
-          </div>
+          <AlertsBoard
+            snapshot={snapshot}
+            alerts={alerts}
+            activeAlerts={activeAlerts}
+            activeAlertCount={activeAlertCount}
+            live={(alertsLive || live || metricsLive) && !paused}
+            tick={metricsTick}
+          />
         ) : null}
 
         {tab === 'stack' ? (
