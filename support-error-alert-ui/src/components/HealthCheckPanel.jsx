@@ -610,7 +610,11 @@ function TransactionsBoard({ transactions, sort, onSort }) {
         </div>
         <div className="health-empty">
           <p>No transactions yet.</p>
-          <span>Hit app endpoints on the monitored service (not /actuator) to populate charts.</span>
+          <span>
+            Actuator is up, but only infrastructure URIs were seen. Call app APIs on the monitored
+            service — e.g. <span className="mono">GET /api/products</span>,{' '}
+            <span className="mono">GET /api/categories</span> — not <span className="mono">/actuator</span>.
+          </span>
         </div>
       </div>
     );
@@ -1112,7 +1116,7 @@ function ErrorsBoard({ snapshot, transactions, samples = [], live = false, tick 
           <span>
             {totalRequests > 0
               ? 'App URIs look clean — no 4xx/5xx responses in the current window.'
-              : 'Generate traffic on app APIs (not /actuator) to populate error charts.'}
+              : 'Call drugstore APIs (e.g. /api/products) so HTTP metrics appear. Actuator-only traffic is ignored.'}
           </span>
         </div>
       ) : (
@@ -1558,7 +1562,11 @@ function LatencyBoard({ snapshot, transactions, samples = [], live = false, tick
       {!ranked.length ? (
         <div className="health-empty health-lat__empty">
           <p>No latency data yet</p>
-          <span>Generate traffic on app APIs (not /actuator) to populate response-time charts.</span>
+          <span>
+            Call drugstore APIs (e.g. <span className="mono">/api/products</span>,{' '}
+            <span className="mono">/api/categories</span>) to populate response-time charts. Actuator
+            scrapes are excluded.
+          </span>
         </div>
       ) : (
         <>
