@@ -25,7 +25,11 @@ public record ApmSnapshot(
         List<ThreadStack> topStacks,
         List<MetricSample> recentSamples,
         String targetUrl,
-        String source
+        String source,
+        String applicationId,
+        String applicationName,
+        String environment,
+        String environmentLabel
 ) {
     public record LoadStats(
             double processCpuLoad,
@@ -38,7 +42,22 @@ public record ApmSnapshot(
     public record MemoryStats(long usedBytes, long committedBytes, long maxBytes, double usedPercent) {
     }
 
-    public record GcStats(long collectionCount, long collectionTimeMs) {
+    public record GcStats(
+            long collectionCount,
+            long collectionTimeMs,
+            long collectionCountDelta,
+            long collectionTimeMsDelta,
+            List<GcCollectorStats> collectors
+    ) {
+    }
+
+    public record GcCollectorStats(
+            String name,
+            long collectionCount,
+            long collectionTimeMs,
+            long collectionCountDelta,
+            long collectionTimeMsDelta
+    ) {
     }
 
     public record ThreadStats(int live, int peak, int daemon, int runnable, int blocked, int waiting) {
@@ -89,10 +108,15 @@ public record ApmSnapshot(
             Instant timestamp,
             double processCpuLoad,
             double heapUsedPercent,
+            double nonHeapUsedPercent,
             double requestsPerMinute,
             double errorRatePercent,
             double avgLatencyMs,
-            double apdex
+            double apdex,
+            long gcCollectionCount,
+            long gcCollectionTimeMs,
+            long gcCollectionCountDelta,
+            long gcCollectionTimeMsDelta
     ) {
     }
 
@@ -117,7 +141,11 @@ public record ApmSnapshot(
                 topStacks,
                 recentSamples,
                 targetUrl,
-                source
+                source,
+                applicationId,
+                applicationName,
+                environment,
+                environmentLabel
         );
     }
 }

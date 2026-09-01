@@ -20,12 +20,10 @@ public class RemoteActuatorClient {
 
     private static final Logger log = LoggerFactory.getLogger(RemoteActuatorClient.class);
 
-    private final HealthCheckProperties properties;
     private final ObjectMapper objectMapper;
     private final RestClient restClient;
 
     public RemoteActuatorClient(HealthCheckProperties properties, ObjectMapper objectMapper) {
-        this.properties = properties;
         this.objectMapper = objectMapper;
         Duration connect = properties.getConnectTimeout() != null ? properties.getConnectTimeout() : Duration.ofSeconds(2);
         Duration read = properties.getReadTimeout() != null ? properties.getReadTimeout() : Duration.ofSeconds(5);
@@ -37,8 +35,8 @@ public class RemoteActuatorClient {
         this.restClient = RestClient.builder().requestFactory(factory).build();
     }
 
-    public Optional<JsonNode> getJson(String relativePath) {
-        String base = properties.normalizedActuatorBaseUrl();
+    public Optional<JsonNode> getJson(String actuatorBaseUrl, String relativePath) {
+        String base = HealthCheckProperties.normalizeActuatorUrl(actuatorBaseUrl);
         if (base.isBlank()) {
             return Optional.empty();
         }

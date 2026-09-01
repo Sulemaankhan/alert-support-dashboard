@@ -10,17 +10,29 @@ import { request } from './httpClient.js';
  */
 
 /**
- * @typedef {Object} ApmLoadStats
- * @property {number} processCpuLoad
- * @property {number} systemCpuLoad
- * @property {number} systemLoadAverage
- * @property {number} availableProcessors
+ * @typedef {Object} ApmGcCollectorStats
+ * @property {string} name
+ * @property {number} collectionCount
+ * @property {number} collectionTimeMs
+ * @property {number} collectionCountDelta
+ * @property {number} collectionTimeMsDelta
  */
 
 /**
  * @typedef {Object} ApmGcStats
  * @property {number} collectionCount
  * @property {number} collectionTimeMs
+ * @property {number} collectionCountDelta
+ * @property {number} collectionTimeMsDelta
+ * @property {ApmGcCollectorStats[]} [collectors]
+ */
+
+/**
+ * @typedef {Object} ApmLoadStats
+ * @property {number} processCpuLoad
+ * @property {number} systemCpuLoad
+ * @property {number} systemLoadAverage
+ * @property {number} availableProcessors
  */
 
 /**
@@ -91,6 +103,29 @@ import { request } from './httpClient.js';
  */
 
 /**
+ * @typedef {Object} HealthEnvironment
+ * @property {string} id
+ * @property {string} label
+ * @property {string} url
+ * @property {string} service
+ * @property {'remote' | 'local' | string} source
+ */
+
+/**
+ * @typedef {Object} HealthApplication
+ * @property {string} id
+ * @property {string} name
+ * @property {HealthEnvironment[]} environments
+ */
+
+/**
+ * @typedef {Object} HealthTargetsCatalog
+ * @property {string} defaultApplication
+ * @property {string} defaultEnvironment
+ * @property {HealthApplication[]} applications
+ */
+
+/**
  * @typedef {Object} ApmAlertsView
  * @property {string} timestamp
  * @property {string} serviceName
@@ -99,6 +134,10 @@ import { request } from './httpClient.js';
  * @property {ApmAlertEvent[]} [active]
  * @property {ApmAlertEvent[]} alerts
  * @property {ApmAlertEvent[]} latest
+ * @property {string} [applicationId]
+ * @property {string} [applicationName]
+ * @property {string} [environment]
+ * @property {string} [environmentLabel]
  */
 
 /**
@@ -114,10 +153,15 @@ import { request } from './httpClient.js';
  * @property {string} timestamp
  * @property {number} processCpuLoad
  * @property {number} heapUsedPercent
+ * @property {number} [nonHeapUsedPercent]
  * @property {number} requestsPerMinute
  * @property {number} errorRatePercent
  * @property {number} [avgLatencyMs]
  * @property {number} [apdex]
+ * @property {number} [gcCollectionCount]
+ * @property {number} [gcCollectionTimeMs]
+ * @property {number} [gcCollectionCountDelta]
+ * @property {number} [gcCollectionTimeMsDelta]
  */
 
 /**
@@ -130,12 +174,18 @@ import { request } from './httpClient.js';
  * @property {number} uptimeMs
  * @property {ApmLoadStats} load
  * @property {ApmMemoryStats} heap
+ * @property {ApmMemoryStats} [nonHeap]
+ * @property {ApmGcStats} [gc]
  * @property {ApmThreadStats} threads
  * @property {ApmRequestStats} requests
  * @property {ApmLatencyStats} [latency]
  * @property {ApmApdexStats} [apdex]
  * @property {ApmTransaction[]} [transactions]
  * @property {ApmMetricSample[]} recentSamples
+ * @property {string} [applicationId]
+ * @property {string} [applicationName]
+ * @property {string} [environment]
+ * @property {string} [environmentLabel]
  */
 
 /**
@@ -160,7 +210,23 @@ import { request } from './httpClient.js';
  * @property {ApmMetricSample[]} recentSamples
  * @property {string} [targetUrl]
  * @property {'remote' | 'local' | string} [source]
+ * @property {string} [applicationId]
+ * @property {string} [applicationName]
+ * @property {string} [environment]
+ * @property {string} [environmentLabel]
  */
+
+/**
+ * @param {string} [application]
+ * @param {string} [env]
+ */
+export function targetQuery(application, env) {
+  const params = new URLSearchParams();
+  if (application) params.set('application', application);
+  if (env) params.set('env', env);
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
 
 function openEventSource(path, handlers) {
   const url = `${API_BASE}${path}`;
@@ -194,36 +260,105 @@ function openEventSource(path, handlers) {
   return () => source.close();
 }
 
-/** @returns {Promise<ApmSnapshot>} */
-export async function fetchApmSnapshot() {
-  const res = await request('/api/health/apm');
+/** @returns {Promise<HealthTargetsCatalog>} */
+export async function fetchHealthTargets() {
+  const res = await request('/api/health/targets');
   return res.json();
 }
 
-/** @returns {Promise<ApmMetricsView>} */
-export async function fetchApmMetrics() {
-  const res = await request('/api/health/apm/metrics');
+/**
+ * @param {string} [application]
+ * @param {string} [env]
+ * @returns {Promise<ApmSnapshot>}
+ */
+export async function fetchApmSnapshot(application, env) {
+  const res = await request(`/api/health/apm${targetQuery(application, env)}`);
   return res.json();
 }
 
-/** @returns {Promise<ApmAlertsView>} */
-export async function fetchApmAlerts() {
-  const res = await request('/api/health/apm/alerts');
+/**
+ * @param {string} [application]
+ * @param {string} [env]
+ * @returns {Promise<ApmMetricsView>}
+ */
+export async function fetchApmMetrics(application, env) {
+  const res = await request(`/api/health/apm/metrics${targetQuery(application, env)}`);
   return res.json();
 }
 
-/** @returns {Promise<{ threadCount: number, threads: ApmThreadStack[] }>} */
-export async function fetchApmStack() {
-  const res = await request('/api/health/apm/stack');
+/**
+ * @param {string} [application]
+ * @param {string} [env]
+ * @returns {Promise<ApmAlertsView>}
+ */
+export async function fetchApmAlerts(application, env) {
+  const res = await request(`/api/health/apm/alerts${targetQuery(application, env)}`);
+  return res.json();
+}
+
+/**
+ * @param {string} [application]
+ * @param {string} [env]
+ * @returns {Promise<{ threadCount: number, threads: ApmThreadStack[] }>}
+ */
+export async function fetchApmStack(application, env) {
+  const res = await request(`/api/health/apm/stack${targetQuery(application, env)}`);
+  return res.json();
+}
+
+/**
+ * @typedef {Object} HeapMemoryPoolUsage
+ * @property {string} id
+ * @property {string} area
+ * @property {number} usedBytes
+ * @property {number} committedBytes
+ * @property {number} maxBytes
+ * @property {number} usedPercent
+ */
+
+/**
+ * @typedef {Object} HeapClassMemoryUsage
+ * @property {number} rank
+ * @property {string} className
+ * @property {number} instanceCount
+ * @property {number} shallowBytes
+ * @property {number} percentOfTotal
+ */
+
+/**
+ * @typedef {Object} HeapAnalysisView
+ * @property {string} timestamp
+ * @property {string} serviceName
+ * @property {string} applicationId
+ * @property {string} applicationName
+ * @property {string} environment
+ * @property {string} environmentLabel
+ * @property {string} source
+ * @property {string} targetUrl
+ * @property {boolean} histogramAvailable
+ * @property {string} histogramNote
+ * @property {HeapMemoryPoolUsage[]} pools
+ * @property {HeapClassMemoryUsage[]} classes
+ * @property {number} totalShallowBytes
+ * @property {number} classCount
+ */
+
+/**
+ * @param {string} [application]
+ * @param {string} [env]
+ * @returns {Promise<HeapAnalysisView>}
+ */
+export async function fetchHeapAnalysis(application, env) {
+  const res = await request(`/api/health/apm/heap-analysis${targetQuery(application, env)}`);
   return res.json();
 }
 
 /**
  * Full APM snapshot stream (+ alert push events).
- * @param {{ onApm?: (s: ApmSnapshot) => void, onAlert?: (a: ApmAlertEvent) => void, onError?: (e: Event) => void }} handlers
+ * @param {{ onApm?: (s: ApmSnapshot) => void, onAlert?: (a: ApmAlertEvent) => void, onError?: (e: Event) => void, application?: string, env?: string }} handlers
  */
 export function subscribeApmStream(handlers) {
-  return openEventSource('/api/health/apm/stream', {
+  return openEventSource(`/api/health/apm/stream${targetQuery(handlers.application, handlers.env)}`, {
     apm: handlers.onApm,
     alert: handlers.onAlert,
     message: handlers.onApm,
@@ -233,10 +368,10 @@ export function subscribeApmStream(handlers) {
 
 /**
  * Lightweight metrics stream (~1s).
- * @param {{ onMetrics?: (m: ApmMetricsView) => void, onError?: (e: Event) => void }} handlers
+ * @param {{ onMetrics?: (m: ApmMetricsView) => void, onError?: (e: Event) => void, application?: string, env?: string }} handlers
  */
 export function subscribeMetricsStream(handlers) {
-  return openEventSource('/api/health/apm/metrics/stream', {
+  return openEventSource(`/api/health/apm/metrics/stream${targetQuery(handlers.application, handlers.env)}`, {
     metrics: handlers.onMetrics,
     message: handlers.onMetrics,
     error: handlers.onError,
@@ -245,10 +380,10 @@ export function subscribeMetricsStream(handlers) {
 
 /**
  * Alerts feed stream (full list + single alert pushes).
- * @param {{ onAlerts?: (a: ApmAlertsView) => void, onAlert?: (a: ApmAlertEvent) => void, onError?: (e: Event) => void }} handlers
+ * @param {{ onAlerts?: (a: ApmAlertsView) => void, onAlert?: (a: ApmAlertEvent) => void, onError?: (e: Event) => void, application?: string, env?: string }} handlers
  */
 export function subscribeAlertsStream(handlers) {
-  return openEventSource('/api/health/apm/alerts/stream', {
+  return openEventSource(`/api/health/apm/alerts/stream${targetQuery(handlers.application, handlers.env)}`, {
     alerts: handlers.onAlerts,
     alert: handlers.onAlert,
     message: handlers.onAlerts,

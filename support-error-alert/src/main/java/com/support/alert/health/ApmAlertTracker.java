@@ -1,7 +1,5 @@
 package com.support.alert.health;
 
-import org.springframework.stereotype.Component;
-
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -10,7 +8,6 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Keeps a short in-memory APM alert timeline (threshold crossings / status changes). */
-@Component
 public class ApmAlertTracker {
 
     private static final int MAX_ALERTS = 40;

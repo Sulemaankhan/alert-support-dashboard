@@ -9,7 +9,6 @@ import org.springframework.boot.actuate.health.HealthEndpoint;
 import org.springframework.boot.actuate.health.SystemHealth;
 import org.springframework.stereotype.Service;
 
-import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
@@ -30,55 +29,50 @@ import java.util.concurrent.atomic.AtomicReference;
 @Service
 public class ApmMetricsService {
 
-    private static final int MAX_SAMPLES = 120;
     private static final int TOP_STACK_THREADS = 8;
     private static final int STACK_FRAMES = 12;
 
     private final String localServiceName;
     private final HealthCheckProperties healthCheckProperties;
-    private final RemoteApmCollector remoteApmCollector;
-    private final ApmAlertTracker alertTracker;
+    private final TargetApmRegistry targetApmRegistry;
     private final MeterRegistry meterRegistry;
     private final HealthEndpoint healthEndpoint;
-    private final List<ApmSnapshot.MetricSample> recentSamples = new ArrayList<>();
-    private final AtomicReference<RequestCounters> previousCounters = new AtomicReference<>(RequestCounters.ZERO);
-    private final AtomicReference<Instant> previousSampleAt = new AtomicReference<>(null);
-    private final RpmWindow rpmWindow = new RpmWindow(300_000L);
 
     public ApmMetricsService(
             @Value("${spring.application.name:support-error-alert}") String localServiceName,
             HealthCheckProperties healthCheckProperties,
-            RemoteApmCollector remoteApmCollector,
-            ApmAlertTracker alertTracker,
+            TargetApmRegistry targetApmRegistry,
             MeterRegistry meterRegistry,
             HealthEndpoint healthEndpoint) {
         this.localServiceName = localServiceName;
         this.healthCheckProperties = healthCheckProperties;
-        this.remoteApmCollector = remoteApmCollector;
-        this.alertTracker = alertTracker;
+        this.targetApmRegistry = targetApmRegistry;
         this.meterRegistry = meterRegistry;
         this.healthEndpoint = healthEndpoint;
     }
 
-    public synchronized ApmSnapshot snapshot() {
-        return snapshot(true);
+    public synchronized ApmSnapshot snapshot(HealthTarget target) {
+        return snapshot(target, true);
     }
 
-    public synchronized ApmSnapshot snapshot(boolean includeStacks) {
-        ApmSnapshot base = healthCheckProperties.isRemoteConfigured()
-                ? remoteApmCollector.collect(includeStacks)
-                : localSnapshot(includeStacks);
-        return base.withAlerts(alertTracker.evaluate(base));
+    public synchronized ApmSnapshot snapshot(HealthTarget target, boolean includeStacks) {
+        TargetApmSession session = targetApmRegistry.session(target);
+        ApmSnapshot base = target.isRemote() && session.remoteCollector != null
+                ? session.remoteCollector.collect(includeStacks)
+                : localSnapshot(target, session, includeStacks);
+        return base.withAlerts(session.alertTracker.evaluate(base));
     }
 
-    public synchronized List<ApmSnapshot.ThreadStack> fullStackDump() {
-        if (healthCheckProperties.isRemoteConfigured()) {
-            return remoteApmCollector.fullStackDump();
+    public synchronized List<ApmSnapshot.ThreadStack> fullStackDump(HealthTarget target) {
+        TargetApmSession session = targetApmRegistry.session(target);
+        if (target.isRemote() && session.remoteCollector != null) {
+            return session.remoteCollector.fullStackDump();
         }
         return readTopStacks(ManagementFactory.getThreadMXBean(), 40, 40);
     }
 
-    private ApmSnapshot localSnapshot(boolean includeStacks) {
+    private ApmSnapshot localSnapshot(HealthTarget target, TargetApmSession session, boolean includeStacks) {
+        LocalTargetMetrics metrics = session.localMetrics;
         double apdexThreshold = healthCheckProperties.getApdexThresholdMs() > 0
                 ? healthCheckProperties.getApdexThresholdMs()
                 : 500;
@@ -89,11 +83,11 @@ public class ApmMetricsService {
         ApmSnapshot.MemoryStats heap = toMemoryStats(memory.getHeapMemoryUsage());
         ApmSnapshot.MemoryStats nonHeap = toMemoryStats(memory.getNonHeapMemoryUsage());
         ApmSnapshot.LoadStats load = readLoad();
-        ApmSnapshot.GcStats gc = readGc();
+        ApmSnapshot.GcStats gc = metrics.gcMetricsTracker.build(GcMetricsTracker.fromLocalMxBeans());
         ApmSnapshot.ThreadStats threadStats = readThreadStats(threads);
         ApmSnapshot.HealthStats health = readHealth();
         ApmSnapshot.ProbeStats probes = readProbes();
-        RequestBundle requestBundle = readRequests();
+        RequestBundle requestBundle = readRequests(metrics);
         List<ApmSnapshot.TransactionStats> transactions = readTransactions(apdexThreshold);
         ApmSnapshot.ApdexStats apdex = transactions.isEmpty()
                 ? ApmScoring.apdex(requestBundle.requests().avgResponseTimeMs(), apdexThreshold)
@@ -106,25 +100,27 @@ public class ApmMetricsService {
         List<ApmSnapshot.ThreadStack> topStacks = includeStacks ? readTopStacks(threads) : List.of();
 
         Instant now = Instant.now();
-        recentSamples.add(new ApmSnapshot.MetricSample(
+        metrics.addSample(new ApmSnapshot.MetricSample(
                 now,
                 load.processCpuLoad(),
                 heap.usedPercent(),
+                nonHeap.usedPercent(),
                 requestBundle.requests().requestsPerMinute(),
                 requestBundle.requests().errorRatePercent(),
                 requestBundle.requests().avgResponseTimeMs(),
-                apdex.score()
+                apdex.score(),
+                gc.collectionCount(),
+                gc.collectionTimeMs(),
+                gc.collectionCountDelta(),
+                gc.collectionTimeMsDelta()
         ));
-        while (recentSamples.size() > MAX_SAMPLES) {
-            recentSamples.remove(0);
-        }
 
         String status = ApmScoring.deriveStatus(heap, requestBundle.requests(), health, probes, apdex);
 
         return new ApmSnapshot(
                 status,
                 now,
-                localServiceName,
+                target.resolvedServiceName(localServiceName),
                 runtime.getUptime(),
                 load,
                 heap,
@@ -139,9 +135,13 @@ public class ApmMetricsService {
                 transactions,
                 List.of(),
                 topStacks,
-                List.copyOf(recentSamples),
+                List.copyOf(metrics.recentSamples),
                 "local",
-                "local"
+                "local",
+                target.applicationId(),
+                target.applicationName(),
+                target.environmentId(),
+                target.environmentLabel()
         );
     }
 
@@ -203,22 +203,6 @@ public class ApmMetricsService {
                 round2(os.getSystemLoadAverage()),
                 Runtime.getRuntime().availableProcessors()
         );
-    }
-
-    private static ApmSnapshot.GcStats readGc() {
-        long count = 0;
-        long time = 0;
-        for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
-            long c = gc.getCollectionCount();
-            long t = gc.getCollectionTime();
-            if (c > 0) {
-                count += c;
-            }
-            if (t > 0) {
-                time += t;
-            }
-        }
-        return new ApmSnapshot.GcStats(count, time);
     }
 
     private static ApmSnapshot.ThreadStats readThreadStats(ThreadMXBean threads) {
@@ -287,7 +271,7 @@ public class ApmMetricsService {
         return component.getStatus().getCode();
     }
 
-    private RequestBundle readRequests() {
+    private RequestBundle readRequests(LocalTargetMetrics metrics) {
         Collection<Timer> timers = meterRegistry.find("http.server.requests").timers();
         long total = 0;
         long errors = 0;
@@ -310,30 +294,31 @@ public class ApmMetricsService {
         }
 
         Instant now = Instant.now();
-        RequestCounters current = new RequestCounters(total, errors, totalMs);
-        Instant previousAt = previousSampleAt.get();
+        LocalTargetMetrics.RequestCounters current =
+                new LocalTargetMetrics.RequestCounters(total, errors, totalMs);
+        Instant previousAt = metrics.previousSampleAt.get();
         double avgMs = total > 0 ? round2(totalMs / total) : 0.0;
         double overallErrorRate = total > 0 ? round2((errors * 100.0) / total) : 0.0;
 
-        if (previousAt == null || current.total < previousCounters.get().total) {
-            previousCounters.set(current);
-            previousSampleAt.set(now);
-            rpmWindow.clear();
-            rpmWindow.observe(now.toEpochMilli(), total);
+        if (previousAt == null || current.total() < metrics.previousCounters.get().total()) {
+            metrics.previousCounters.set(current);
+            metrics.previousSampleAt.set(now);
+            metrics.rpmWindow.clear();
+            metrics.rpmWindow.observe(now.toEpochMilli(), total);
             return new RequestBundle(
                     new ApmSnapshot.RequestStats(total, errors, 0, 0, 0, overallErrorRate, avgMs),
                     round2(maxMs)
             );
         }
 
-        RequestCounters previous = previousCounters.get();
-        long reqDelta = Math.max(0, current.total - previous.total);
-        long errDelta = Math.max(0, current.errors - previous.errors);
-        double rpm = rpmWindow.observe(now.toEpochMilli(), total);
+        LocalTargetMetrics.RequestCounters previous = metrics.previousCounters.get();
+        long reqDelta = Math.max(0, current.total() - previous.total());
+        long errDelta = Math.max(0, current.errors() - previous.errors());
+        double rpm = metrics.rpmWindow.observe(now.toEpochMilli(), total);
         double errorRate = reqDelta > 0 ? round2((errDelta * 100.0) / reqDelta) : overallErrorRate;
 
-        previousCounters.set(current);
-        previousSampleAt.set(now);
+        metrics.previousCounters.set(current);
+        metrics.previousSampleAt.set(now);
         return new RequestBundle(
                 new ApmSnapshot.RequestStats(total, errors, reqDelta, errDelta, rpm, errorRate, avgMs),
                 round2(maxMs)
@@ -412,10 +397,6 @@ public class ApmMetricsService {
             return value < 0 ? -1 : 0;
         }
         return Math.round(value * 100.0) / 100.0;
-    }
-
-    private record RequestCounters(long total, long errors, double totalMs) {
-        static final RequestCounters ZERO = new RequestCounters(0, 0, 0);
     }
 
     private record RequestBundle(ApmSnapshot.RequestStats requests, double maxMs) {

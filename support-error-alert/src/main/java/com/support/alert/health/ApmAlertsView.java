@@ -11,6 +11,10 @@ public record ApmAlertsView(
         int activeCount,
         List<ApmSnapshot.AlertEvent> active,
         List<ApmSnapshot.AlertEvent> alerts,
-        List<ApmSnapshot.AlertEvent> latest
+        List<ApmSnapshot.AlertEvent> latest,
+        String applicationId,
+        String applicationName,
+        String environment,
+        String environmentLabel
 ) {
 }

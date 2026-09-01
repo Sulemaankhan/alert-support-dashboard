@@ -1,11 +1,13 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { SECTION } from '../constants/branding.js';
 import { NAV_SECTION } from '../constants/nav.js';
+import * as healthService from '../services/healthService.js';
 import './AlertSourcePanel.css';
 import './HealthCheckPanel.css';
 
 const APM_TABS = [
   { id: 'overview', label: 'Overview' },
+  { id: 'memory', label: 'Memory' },
   { id: 'transactions', label: 'Transactions' },
   { id: 'latency', label: 'Latency' },
   { id: 'errors', label: 'Errors' },
@@ -1742,6 +1744,403 @@ function LatencyBoard({ snapshot, transactions, samples = [], live = false, tick
 }
 
 /**
+ * Heap, non-heap, and GC collector metrics for the selected target.
+ * @param {{
+ *   snapshot: import('../services/healthService.js').ApmSnapshot | null,
+ *   samples?: any[],
+ *   application?: string,
+ *   environment?: string,
+ *   live?: boolean,
+ *   tick?: number,
+ * }} props
+ */
+function MemoryGcBoard({ snapshot, samples = [], application = '', environment = '', live = false, tick = 0 }) {
+  const [heapAnalysis, setHeapAnalysis] = useState(/** @type {import('../services/healthService.js').HeapAnalysisView | null} */ (null));
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState(/** @type {string | null} */ (null));
+  const [classSort, setClassSort] = useState(/** @type {'bytes' | 'instances' | 'name'} */ ('bytes'));
+
+  const loadHeapAnalysis = useCallback(async () => {
+    if (!application || !environment) return;
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    try {
+      const data = await healthService.fetchHeapAnalysis(application, environment);
+      setHeapAnalysis(data);
+    } catch (e) {
+      setAnalysisError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }, [application, environment]);
+
+  useEffect(() => {
+    loadHeapAnalysis();
+  }, [loadHeapAnalysis]);
+  const heap = snapshot?.heap;
+  const nonHeap = snapshot?.nonHeap;
+  const gc = snapshot?.gc;
+  const heapPct = Number(heap?.usedPercent) || 0;
+  const nonHeapPct = Number(nonHeap?.usedPercent) || 0;
+  const gcCountDelta = Number(gc?.collectionCountDelta) || 0;
+  const gcTimeDelta = Number(gc?.collectionTimeMsDelta) || 0;
+  const collectors = gc?.collectors ?? [];
+  const heapTone = heapPct >= 85 ? 'danger' : heapPct >= 70 ? 'warn' : 'ok';
+  const gcTone = gcTimeDelta >= 200 || gcCountDelta >= 5 ? 'warn' : 'ok';
+  const heapTrend = trendFromSamples(samples, (s) => s.heapUsedPercent);
+  const nonHeapTrend = trendFromSamples(samples, (s) => s.nonHeapUsedPercent ?? 0);
+  const gcTimeTrend = trendFromSamples(samples, (s) => s.gcCollectionTimeMsDelta ?? 0);
+
+  const sortedClasses = useMemo(() => {
+    const list = [...(heapAnalysis?.classes ?? [])];
+    list.sort((a, b) => {
+      if (classSort === 'instances') return b.instanceCount - a.instanceCount;
+      if (classSort === 'name') return String(a.className).localeCompare(String(b.className));
+      return b.shallowBytes - a.shallowBytes;
+    });
+    return list;
+  }, [heapAnalysis?.classes, classSort]);
+
+  return (
+    <div className={`health-mem${live ? ' health-mem--live' : ''}`}>
+      <div className="health-mem__toolbar">
+        <div>
+          <h3 className="health-stack__title">Memory &amp; GC</h3>
+          <p className="health-metric__sub">
+            JVM heap, non-heap, and garbage collector activity · {formatRelative(snapshot?.timestamp)}
+          </p>
+        </div>
+        <span className={live ? 'health-live health-live--on' : 'health-live health-live--off'}>
+          <span className="health-live__dot" aria-hidden="true" />
+          {live ? 'Streaming' : 'Waiting…'}
+        </span>
+      </div>
+
+      <div className="health-mem__kpis">
+        <div className={`health-mem__kpi health-mem__kpi--${heapTone}`}>
+          <span>Heap used</span>
+          <strong className="mono" key={`heap-${tick}`}>{formatNum(heapPct, 1)}%</strong>
+          <em>{formatBytes(heap?.usedBytes)} / {formatBytes(heap?.maxBytes)}</em>
+        </div>
+        <div className="health-mem__kpi">
+          <span>Non-heap</span>
+          <strong className="mono" key={`nh-${tick}`}>{formatNum(nonHeapPct, 1)}%</strong>
+          <em>{formatBytes(nonHeap?.usedBytes)} used</em>
+        </div>
+        <div className={`health-mem__kpi health-mem__kpi--${gcTone}`}>
+          <span>GC Δ (tick)</span>
+          <strong className="mono" key={`gcd-${tick}`}>{gcCountDelta}</strong>
+          <em>{gcTimeDelta} ms pause</em>
+        </div>
+        <div className="health-mem__kpi">
+          <span>GC lifetime</span>
+          <strong className="mono">{gc?.collectionCount ?? '—'}</strong>
+          <em>{gc?.collectionTimeMs ?? '—'} ms total</em>
+        </div>
+      </div>
+
+      <div className="health-mem__grid">
+        <article className={`health-mem__panel health-mem__panel--heap health-mem__panel--${heapTone}`}>
+          <header className="health-mem__panel-head">
+            <h4>Heap memory</h4>
+            <span className={`health-signal__trend health-signal__trend--${heapTrend}`}>
+              {heapTrend === 'up' ? '▲' : heapTrend === 'down' ? '▼' : '●'}
+            </span>
+          </header>
+          <div className="health-mem__panel-body">
+            <RingMeter
+              value={heapPct}
+              max={100}
+              color={heapTone === 'danger' ? '#c62828' : heapTone === 'warn' ? '#b45309' : '#0f766e'}
+              label="used"
+              display={`${formatNum(heapPct, 0)}%`}
+              size={108}
+            />
+            <div className="health-mem__panel-side">
+              <dl className="health-mem__stats">
+                <div>
+                  <dt>Used</dt>
+                  <dd className="mono">{formatBytes(heap?.usedBytes)}</dd>
+                </div>
+                <div>
+                  <dt>Committed</dt>
+                  <dd className="mono">{formatBytes(heap?.committedBytes)}</dd>
+                </div>
+                <div>
+                  <dt>Max</dt>
+                  <dd className="mono">{formatBytes(heap?.maxBytes)}</dd>
+                </div>
+              </dl>
+              <Sparkline
+                samples={samples}
+                getValue={(s) => s.heapUsedPercent}
+                color="#0f766e"
+                floorMax={100}
+                height={48}
+                live
+              />
+            </div>
+          </div>
+        </article>
+
+        <article className="health-mem__panel health-mem__panel--nonheap">
+          <header className="health-mem__panel-head">
+            <h4>Non-heap memory</h4>
+            <span className={`health-signal__trend health-signal__trend--${nonHeapTrend}`}>
+              {nonHeapTrend === 'up' ? '▲' : nonHeapTrend === 'down' ? '▼' : '●'}
+            </span>
+          </header>
+          <div className="health-mem__panel-body">
+            <RingMeter
+              value={nonHeapPct}
+              max={100}
+              color="#0891b2"
+              label="used"
+              display={`${formatNum(nonHeapPct, 0)}%`}
+              size={108}
+            />
+            <div className="health-mem__panel-side">
+              <dl className="health-mem__stats">
+                <div>
+                  <dt>Used</dt>
+                  <dd className="mono">{formatBytes(nonHeap?.usedBytes)}</dd>
+                </div>
+                <div>
+                  <dt>Committed</dt>
+                  <dd className="mono">{formatBytes(nonHeap?.committedBytes)}</dd>
+                </div>
+                <div>
+                  <dt>Max</dt>
+                  <dd className="mono">{formatBytes(nonHeap?.maxBytes)}</dd>
+                </div>
+              </dl>
+              <Sparkline
+                samples={samples}
+                getValue={(s) => s.nonHeapUsedPercent ?? 0}
+                color="#0891b2"
+                floorMax={100}
+                height={48}
+                live
+              />
+            </div>
+          </div>
+        </article>
+
+        <article className={`health-mem__panel health-mem__panel--gc health-mem__panel--${gcTone}`}>
+          <header className="health-mem__panel-head">
+            <h4>Garbage collection</h4>
+            <span className={`health-signal__trend health-signal__trend--${gcTimeTrend}`}>
+              {gcTimeTrend === 'up' ? '▲' : gcTimeTrend === 'down' ? '▼' : '●'}
+            </span>
+          </header>
+          <div className="health-mem__gc-summary">
+            <div>
+              <span>Collections (Δ)</span>
+              <strong className="mono">{gcCountDelta}</strong>
+            </div>
+            <div>
+              <span>Pause time (Δ)</span>
+              <strong className="mono">{gcTimeDelta} ms</strong>
+            </div>
+            <div>
+              <span>Total collections</span>
+              <strong className="mono">{gc?.collectionCount ?? '—'}</strong>
+            </div>
+            <div>
+              <span>Total pause</span>
+              <strong className="mono">{gc?.collectionTimeMs ?? '—'} ms</strong>
+            </div>
+          </div>
+          <div className="health-mem__gc-charts">
+            <Sparkline
+              samples={samples}
+              getValue={(s) => s.gcCollectionCountDelta ?? 0}
+              color="#7c3aed"
+              floorMax={1}
+              height={44}
+              live
+            />
+            <Sparkline
+              samples={samples}
+              getValue={(s) => s.gcCollectionTimeMsDelta ?? 0}
+              color="#b45309"
+              floorMax={50}
+              height={44}
+              live
+            />
+          </div>
+          {collectors.length ? (
+            <table className="health-mem__gc-table">
+              <thead>
+                <tr>
+                  <th>Collector</th>
+                  <th>Count</th>
+                  <th>Δ</th>
+                  <th>Time (ms)</th>
+                  <th>Δ (ms)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {collectors.map((collector) => (
+                  <tr key={collector.name}>
+                    <td className="mono">{collector.name}</td>
+                    <td className="mono">{collector.collectionCount}</td>
+                    <td className="mono">{collector.collectionCountDelta}</td>
+                    <td className="mono">{collector.collectionTimeMs}</td>
+                    <td className="mono">{collector.collectionTimeMsDelta}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="health-mem__empty">No per-collector GC metrics from this target yet.</p>
+          )}
+        </article>
+      </div>
+
+      <section className="health-mem__analysis" aria-labelledby="heap-analysis-heading">
+        <div className="health-mem__analysis-head">
+          <div>
+            <h3 id="heap-analysis-heading" className="health-stack__title">Heap analysis</h3>
+            <p className="health-metric__sub">
+              Retained memory by pool and shallow bytes per class (live GC histogram)
+              {heapAnalysis?.timestamp ? ` · ${formatRelative(heapAnalysis.timestamp)}` : ''}
+            </p>
+            {heapAnalysis?.histogramNote ? (
+              <p className="health-mem__analysis-note">{heapAnalysis.histogramNote}</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="btn health-btn"
+            onClick={loadHeapAnalysis}
+            disabled={analysisLoading || !application || !environment}
+          >
+            {analysisLoading ? 'Analyzing…' : 'Refresh analysis'}
+          </button>
+        </div>
+
+        {analysisError ? (
+          <p className="health-mem__analysis-error" role="alert">{analysisError}</p>
+        ) : null}
+
+        {analysisLoading && !heapAnalysis ? (
+          <p className="health-mem__empty">Running heap analysis…</p>
+        ) : null}
+
+        {heapAnalysis ? (
+          <>
+            <div className="health-mem__analysis-kpis">
+              <div className="health-mem__kpi">
+                <span>Pools</span>
+                <strong className="mono">{heapAnalysis.pools?.length ?? 0}</strong>
+              </div>
+              <div className="health-mem__kpi">
+                <span>Classes listed</span>
+                <strong className="mono">{heapAnalysis.classCount ?? 0}</strong>
+              </div>
+              <div className="health-mem__kpi">
+                <span>Shallow total (top)</span>
+                <strong className="mono">{formatBytes(heapAnalysis.totalShallowBytes)}</strong>
+              </div>
+              <div className="health-mem__kpi">
+                <span>Histogram</span>
+                <strong>{heapAnalysis.histogramAvailable ? 'Live' : 'Pools only'}</strong>
+              </div>
+            </div>
+
+            <article className="health-mem__analysis-panel">
+              <header className="health-mem__analysis-panel-head">
+                <h4>Memory pools (retained by region)</h4>
+              </header>
+              {heapAnalysis.pools?.length ? (
+                <table className="health-mem__analysis-table">
+                  <thead>
+                    <tr>
+                      <th>Pool</th>
+                      <th>Area</th>
+                      <th>Used</th>
+                      <th>Committed</th>
+                      <th>Max</th>
+                      <th>%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {heapAnalysis.pools.map((pool) => (
+                      <tr key={pool.id}>
+                        <td className="mono">{pool.id}</td>
+                        <td>{pool.area}</td>
+                        <td className="mono">{formatBytes(pool.usedBytes)}</td>
+                        <td className="mono">{formatBytes(pool.committedBytes)}</td>
+                        <td className="mono">{formatBytes(pool.maxBytes)}</td>
+                        <td className="mono">{formatNum(pool.usedPercent, 1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="health-mem__empty">No memory pool metrics from this target.</p>
+              )}
+            </article>
+
+            <article className="health-mem__analysis-panel">
+              <header className="health-mem__analysis-panel-head">
+                <h4>Objects by class (shallow used memory)</h4>
+                <div className="health-tx__sort-pills" role="group" aria-label="Sort classes">
+                  {[
+                    { id: 'bytes', label: 'Bytes' },
+                    { id: 'instances', label: 'Instances' },
+                    { id: 'name', label: 'Name' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      className={classSort === opt.id ? 'health-tx__pill health-tx__pill--on' : 'health-tx__pill'}
+                      onClick={() => setClassSort(/** @type {'bytes' | 'instances' | 'name'} */ (opt.id))}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </header>
+              {sortedClasses.length ? (
+                <table className="health-mem__analysis-table health-mem__analysis-table--classes">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Class</th>
+                      <th>Instances</th>
+                      <th>Shallow bytes</th>
+                      <th>% of listed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedClasses.map((row, index) => (
+                      <tr key={`${row.className}-${index}`}>
+                        <td className="mono">{row.rank ?? index + 1}</td>
+                        <td className="mono health-mem__class-name" title={row.className}>{row.className}</td>
+                        <td className="mono">{row.instanceCount}</td>
+                        <td className="mono">{formatBytes(row.shallowBytes)}</td>
+                        <td className="mono">{formatNum(row.percentOfTotal, 1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="health-mem__empty">
+                  Per-class usage not available for this target. Use Refresh after the service is reachable on the same host,
+                  or analyze a local JVM target.
+                </p>
+              )}
+            </article>
+          </>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+/**
  * Graphical live metrics command center.
  * @param {{
  *   snapshot: import('../services/healthService.js').ApmSnapshot | null,
@@ -1994,8 +2393,8 @@ function MetricsLiveBoard({
               </div>
               <Sparkline samples={samples} getValue={(s) => s.heapUsedPercent} color="#0f766e" height={40} live />
               <em>
-                Non-heap {formatBytes(snapshot?.nonHeap?.usedBytes)} · GC {snapshot?.gc?.collectionCount ?? '—'} (
-                {snapshot?.gc?.collectionTimeMs ?? '—'} ms)
+                Non-heap {formatBytes(snapshot?.nonHeap?.usedBytes)} · GC Δ {snapshot?.gc?.collectionCountDelta ?? 0} (
+                {snapshot?.gc?.collectionTimeMsDelta ?? 0} ms)
               </em>
             </div>
           </div>
@@ -2543,6 +2942,11 @@ function AlertsBoard({
 
 /**
  * @param {Object} props
+ * @param {import('../services/healthService.js').HealthTargetsCatalog | null} [props.catalog]
+ * @param {string} [props.application]
+ * @param {string} [props.environment]
+ * @param {function(string): void} [props.onSelectApplication]
+ * @param {function(string): void} [props.onSelectEnvironment]
  * @param {import('../services/healthService.js').ApmSnapshot | null} props.snapshot
  * @param {import('../services/healthService.js').ApmAlertEvent[]} [props.alerts]
  * @param {import('../services/healthService.js').ApmAlertEvent[]} [props.activeAlerts]
@@ -2565,6 +2969,11 @@ function AlertsBoard({
  * @param {function(): void} [props.onDismissToast]
  */
 export function HealthCheckPanel({
+  catalog = null,
+  application = '',
+  environment = '',
+  onSelectApplication,
+  onSelectEnvironment,
   snapshot,
   alerts: alertsProp,
   activeAlerts = [],
@@ -2600,6 +3009,15 @@ export function HealthCheckPanel({
   const transactions = snapshot?.transactions ?? [];
   const alerts = alertsProp ?? snapshot?.alerts ?? [];
   const tone = shellTone(status);
+  const appId = useId();
+  const envId = useId();
+  const applications = catalog?.applications ?? [];
+  const selectedApp = applications.find((item) => item.id === application) ?? applications[0] ?? null;
+  const environments = selectedApp?.environments ?? [];
+  const selectedEnv = environments.find((item) => item.id === environment) ?? environments[0] ?? null;
+  const displayName = snapshot?.applicationName || selectedApp?.name || snapshot?.serviceName || '—';
+  const displayEnv = snapshot?.environmentLabel || selectedEnv?.label || snapshot?.environment || environment || '';
+  const targetUrl = snapshot?.targetUrl || selectedEnv?.url || '';
 
   const sortedTransactions = useMemo(() => {
     const list = transactions.filter((tx) => {
@@ -2669,16 +3087,59 @@ export function HealthCheckPanel({
           <h2 id="health-check-heading" className="health-hero__title">
             {SECTION.HEALTH.title}
           </h2>
+          <div className="health-target-picker">
+            <label className="health-target-picker__field" htmlFor={appId}>
+              <span>Application</span>
+              <select
+                id={appId}
+                className="health-target-picker__select"
+                value={selectedApp?.id ?? ''}
+                disabled={!applications.length || !onSelectApplication}
+                onChange={(event) => onSelectApplication?.(event.target.value)}
+              >
+                {applications.length ? (
+                  applications.map((app) => (
+                    <option key={app.id} value={app.id}>
+                      {app.name}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">Loading…</option>
+                )}
+              </select>
+            </label>
+            <label className="health-target-picker__field" htmlFor={envId}>
+              <span>Environment</span>
+              <select
+                id={envId}
+                className="health-target-picker__select"
+                value={selectedEnv?.id ?? ''}
+                disabled={!environments.length || !onSelectEnvironment}
+                onChange={(event) => onSelectEnvironment?.(event.target.value)}
+              >
+                {environments.length ? (
+                  environments.map((env) => (
+                    <option key={env.id} value={env.id}>
+                      {env.label}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">—</option>
+                )}
+              </select>
+            </label>
+          </div>
           <p className="health-hero__service">
-            <span className="health-hero__service-name">{snapshot?.serviceName ?? '—'}</span>
-            {snapshot?.targetUrl && snapshot.targetUrl !== 'local' ? (
-              <span className="health-hero__target mono">{snapshot.targetUrl}</span>
+            <span className="health-hero__service-name">{displayName}</span>
+            {displayEnv ? <span className="health-hero__env">{displayEnv}</span> : null}
+            {targetUrl && targetUrl !== 'local' ? (
+              <span className="health-hero__target mono">{targetUrl}</span>
             ) : (
               <span className="health-hero__target">Local JVM</span>
             )}
           </p>
           <p className="health-hero__hint">
-            Live throughput, errors, latency, and Apdex for your Actuator target — updates about every second.
+            {SECTION.HEALTH.loadHint}
           </p>
         </div>
 
@@ -2760,6 +3221,9 @@ export function HealthCheckPanel({
               {item.id === 'overview' && metricsLive ? (
                 <span className="health-apm-tab__live">live</span>
               ) : null}
+              {item.id === 'memory' && metricsLive ? (
+                <span className="health-apm-tab__live">live</span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -2776,6 +3240,17 @@ export function HealthCheckPanel({
             metricsLive={metricsLive}
             alertsLive={alertsLive}
             paused={paused}
+            tick={metricsTick}
+          />
+        ) : null}
+
+        {tab === 'memory' ? (
+          <MemoryGcBoard
+            snapshot={snapshot}
+            samples={samples}
+            application={application}
+            environment={environment}
+            live={isStreaming}
             tick={metricsTick}
           />
         ) : null}

@@ -3,23 +3,34 @@ package com.support.alert.health;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @ConfigurationProperties(prefix = "support.healthcheck")
 public class HealthCheckProperties {
 
     /**
-     * When true and {@link #url} is set, HealthCheck APM scrapes the remote Actuator.
+     * When true, HealthCheck APM is available. Remote scrapes still require a target URL.
      */
     private boolean enabled = true;
 
     /**
-     * Remote Actuator base URL, e.g. {@code http://localhost:4040/actuator}
-     * or {@code http://localhost:4040/actuator/*}.
+     * Legacy single-target Actuator URL. Used only when {@link #applications} is empty.
+     * Prefer {@code support.healthcheck.applications.<id>.environments.<env>.url}.
      */
     private String url = "";
 
-    /** Display / logical service name for the monitored target. */
+    /** Legacy display / logical service name for the monitored target. */
     private String service = "";
+
+    /** Application id selected when the UI does not pass {@code application}. */
+    private String defaultApplication = "";
+
+    /** Environment id selected when the UI does not pass {@code env}. */
+    private String defaultEnvironment = "local";
+
+    /** Named applications, each with one or more environments. */
+    private Map<String, ApplicationConfig> applications = new LinkedHashMap<>();
 
     private Duration connectTimeout = Duration.ofSeconds(2);
 
@@ -74,6 +85,30 @@ public class HealthCheckProperties {
 
     public void setService(String service) {
         this.service = service;
+    }
+
+    public String getDefaultApplication() {
+        return defaultApplication;
+    }
+
+    public void setDefaultApplication(String defaultApplication) {
+        this.defaultApplication = defaultApplication;
+    }
+
+    public String getDefaultEnvironment() {
+        return defaultEnvironment;
+    }
+
+    public void setDefaultEnvironment(String defaultEnvironment) {
+        this.defaultEnvironment = defaultEnvironment;
+    }
+
+    public Map<String, ApplicationConfig> getApplications() {
+        return applications;
+    }
+
+    public void setApplications(Map<String, ApplicationConfig> applications) {
+        this.applications = applications != null ? applications : new LinkedHashMap<>();
     }
 
     public Duration getConnectTimeout() {
@@ -153,15 +188,34 @@ public class HealthCheckProperties {
     }
 
     public boolean isRemoteConfigured() {
+        if (applications != null) {
+            for (ApplicationConfig app : applications.values()) {
+                if (app == null || app.getEnvironments() == null) {
+                    continue;
+                }
+                for (EnvironmentConfig env : app.getEnvironments().values()) {
+                    if (env != null && env.isEnabled() && env.getUrl() != null && !env.getUrl().isBlank()) {
+                        return true;
+                    }
+                }
+            }
+        }
         return enabled && url != null && !url.isBlank();
     }
 
     /** Normalized Actuator base without trailing slash or {@code /*}. */
     public String normalizedActuatorBaseUrl() {
+        return normalizeActuatorUrl(url);
+    }
+
+    public static String normalizeActuatorUrl(String url) {
         if (url == null) {
             return "";
         }
         String value = url.trim();
+        if (value.isBlank()) {
+            return "";
+        }
         if (value.endsWith("/*")) {
             value = value.substring(0, value.length() - 2);
         } else if (value.endsWith("*")) {
@@ -178,5 +232,67 @@ public class HealthCheckProperties {
             return service.trim();
         }
         return fallback;
+    }
+
+    public static class ApplicationConfig {
+        /** Display name in the HealthCheck application selector. */
+        private String name = "";
+        private Map<String, EnvironmentConfig> environments = new LinkedHashMap<>();
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public Map<String, EnvironmentConfig> getEnvironments() {
+            return environments;
+        }
+
+        public void setEnvironments(Map<String, EnvironmentConfig> environments) {
+            this.environments = environments != null ? environments : new LinkedHashMap<>();
+        }
+    }
+
+    public static class EnvironmentConfig {
+        /** Actuator base URL. Blank means scrape this JVM (local). */
+        private String url = "";
+        private String service = "";
+        private String label = "";
+        private boolean enabled = true;
+
+        public String getUrl() {
+            return url;
+        }
+
+        public void setUrl(String url) {
+            this.url = url;
+        }
+
+        public String getService() {
+            return service;
+        }
+
+        public void setService(String service) {
+            this.service = service;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+
+        public void setLabel(String label) {
+            this.label = label;
+        }
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
     }
 }

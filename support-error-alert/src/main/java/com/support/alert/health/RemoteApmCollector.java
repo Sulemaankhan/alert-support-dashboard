@@ -1,8 +1,6 @@
 package com.support.alert.health;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import org.springframework.stereotype.Component;
-
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -18,33 +16,35 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Builds an {@link ApmSnapshot} by scraping a remote Spring Boot Actuator base URL.
  */
-@Component
 public class RemoteApmCollector {
 
     private static final int MAX_SAMPLES = 120;
     private static final long TX_CACHE_MS = 4000L;
     private static final long RPM_WINDOW_MS = 300_000L;
 
+    private final HealthTarget target;
     private final HealthCheckProperties properties;
     private final RemoteActuatorClient client;
     private final List<ApmSnapshot.MetricSample> recentSamples = new ArrayList<>();
     private final AtomicReference<RequestCounters> previousCounters = new AtomicReference<>(RequestCounters.ZERO);
     private final AtomicReference<Instant> previousSampleAt = new AtomicReference<>(null);
     private final RpmWindow rpmWindow = new RpmWindow(RPM_WINDOW_MS);
+    private final GcMetricsTracker gcMetricsTracker = new GcMetricsTracker();
     private volatile List<ApmSnapshot.TransactionStats> cachedTransactions = List.of();
     private volatile long cachedTransactionsAt;
 
-    public RemoteApmCollector(HealthCheckProperties properties, RemoteActuatorClient client) {
+    public RemoteApmCollector(HealthTarget target, HealthCheckProperties properties, RemoteActuatorClient client) {
+        this.target = target;
         this.properties = properties;
         this.client = client;
     }
 
     public synchronized ApmSnapshot collect(boolean includeStacks) {
-        String serviceName = properties.resolvedServiceName("remote-service");
-        String targetUrl = properties.normalizedActuatorBaseUrl();
+        String serviceName = target.resolvedServiceName("remote-service");
+        String targetUrl = target.normalizedActuatorBaseUrl();
         double apdexThreshold = properties.getApdexThresholdMs() > 0 ? properties.getApdexThresholdMs() : 500;
 
-        Optional<JsonNode> healthNode = client.getJson("/health");
+        Optional<JsonNode> healthNode = getJson("/health");
         if (healthNode.isEmpty()) {
             return unreachableSnapshot(serviceName, targetUrl, "Unable to reach " + targetUrl, apdexThreshold);
         }
@@ -73,10 +73,7 @@ public class RemoteApmCollector {
                 (int) Math.max(0, metricValue("system.cpu.count"))
         );
 
-        ApmSnapshot.GcStats gc = new ApmSnapshot.GcStats(
-                (long) Math.max(0, positive(metricStatistic("jvm.gc.pause", "COUNT"))),
-                (long) Math.max(0, positive(metricTimeSeconds("jvm.gc.pause")) * 1000.0)
-        );
+        ApmSnapshot.GcStats gc = readGc();
 
         ApmSnapshot.ThreadStats threads = new ApmSnapshot.ThreadStats(
                 (int) Math.max(0, metricValue("jvm.threads.live")),
@@ -111,10 +108,15 @@ public class RemoteApmCollector {
                 now,
                 load.processCpuLoad(),
                 heap.usedPercent(),
+                nonHeap.usedPercent(),
                 requestBundle.requests().requestsPerMinute(),
                 requestBundle.requests().errorRatePercent(),
                 requestBundle.requests().avgResponseTimeMs(),
-                apdex.score()
+                apdex.score(),
+                gc.collectionCount(),
+                gc.collectionTimeMs(),
+                gc.collectionCountDelta(),
+                gc.collectionTimeMsDelta()
         ));
         while (recentSamples.size() > MAX_SAMPLES) {
             recentSamples.remove(0);
@@ -142,8 +144,16 @@ public class RemoteApmCollector {
                 stacks,
                 List.copyOf(recentSamples),
                 targetUrl,
-                "remote"
+                "remote",
+                target.applicationId(),
+                target.applicationName(),
+                target.environmentId(),
+                target.environmentLabel()
         );
+    }
+
+    private Optional<JsonNode> getJson(String relativePath) {
+        return client.getJson(target.normalizedActuatorBaseUrl(), relativePath);
     }
 
     public synchronized List<ApmSnapshot.ThreadStack> fullStackDump() {
@@ -155,7 +165,7 @@ public class RemoteApmCollector {
      * Throughput RPM uses EWMA + 5-minute rolling window.
      */
     private RequestBundle readLiveAppRequestStats() {
-        Optional<JsonNode> root = client.getJson("/metrics/http.server.requests");
+        Optional<JsonNode> root = getJson("/metrics/http.server.requests");
         if (root.isEmpty()) {
             return new RequestBundle(new ApmSnapshot.RequestStats(0, 0, 0, 0, 0, 0, 0), 0);
         }
@@ -245,7 +255,7 @@ public class RemoteApmCollector {
     }
 
     private List<ApmSnapshot.TransactionStats> scrapeTransactions(double apdexThreshold) {
-        Optional<JsonNode> root = client.getJson("/metrics/http.server.requests");
+        Optional<JsonNode> root = getJson("/metrics/http.server.requests");
         if (root.isEmpty()) {
             return List.of();
         }
@@ -334,7 +344,7 @@ public class RemoteApmCollector {
                 new ApmSnapshot.LoadStats(-1, -1, -1, 0),
                 emptyMem,
                 emptyMem,
-                new ApmSnapshot.GcStats(0, 0),
+                new ApmSnapshot.GcStats(0, 0, 0, 0, List.of()),
                 new ApmSnapshot.ThreadStats(0, 0, 0, 0, 0, 0),
                 new ApmSnapshot.HealthStats("DOWN", Map.of("remote", reason)),
                 new ApmSnapshot.ProbeStats("DOWN", "DOWN"),
@@ -346,12 +356,40 @@ public class RemoteApmCollector {
                 List.of(),
                 List.copyOf(recentSamples),
                 targetUrl,
-                "remote"
+                "remote",
+                target.applicationId(),
+                target.applicationName(),
+                target.environmentId(),
+                target.environmentLabel()
         );
     }
 
+    private ApmSnapshot.GcStats readGc() {
+        List<ApmSnapshot.GcCollectorStats> collectors = new ArrayList<>();
+        Optional<JsonNode> root = getJson("/metrics/jvm.gc.pause");
+        if (root.isPresent()) {
+            String tagKey = "gc";
+            List<String> names = tagValues(root.get(), "gc");
+            if (names.isEmpty()) {
+                tagKey = "name";
+                names = tagValues(root.get(), "name");
+            }
+            for (String name : names) {
+                long count = (long) positive(metricStatistic("jvm.gc.pause", "COUNT", tagKey, name));
+                long timeMs = (long) (positive(metricTimeSeconds("jvm.gc.pause", tagKey, name)) * 1000.0);
+                collectors.add(new ApmSnapshot.GcCollectorStats(name, count, timeMs, 0, 0));
+            }
+        }
+        if (collectors.isEmpty()) {
+            long count = (long) Math.max(0, positive(metricStatistic("jvm.gc.pause", "COUNT")));
+            long timeMs = (long) Math.max(0, positive(metricTimeSeconds("jvm.gc.pause")) * 1000.0);
+            collectors.add(new ApmSnapshot.GcCollectorStats("all", count, timeMs, 0, 0));
+        }
+        return gcMetricsTracker.build(collectors);
+    }
+
     private String parseProbeStatus(String path) {
-        return client.getJson(path)
+        return getJson(path)
                 .map(node -> text(node, "status", "UNKNOWN"))
                 .orElse("UNKNOWN");
     }
@@ -371,7 +409,7 @@ public class RemoteApmCollector {
     }
 
     private List<ApmSnapshot.ThreadStack> readStacks(int limit, int frameLimit) {
-        Optional<JsonNode> dump = client.getJson("/threaddump");
+        Optional<JsonNode> dump = getJson("/threaddump");
         if (dump.isEmpty()) {
             return List.of();
         }
@@ -461,7 +499,7 @@ public class RemoteApmCollector {
                 path.append(tags.get(i));
             }
         }
-        Optional<JsonNode> node = client.getJson(path.toString());
+        Optional<JsonNode> node = getJson(path.toString());
         if (node.isEmpty()) {
             return -1;
         }

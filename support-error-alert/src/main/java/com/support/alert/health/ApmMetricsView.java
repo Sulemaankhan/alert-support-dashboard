@@ -13,12 +13,18 @@ public record ApmMetricsView(
         long uptimeMs,
         ApmSnapshot.LoadStats load,
         ApmSnapshot.MemoryStats heap,
+        ApmSnapshot.MemoryStats nonHeap,
+        ApmSnapshot.GcStats gc,
         ApmSnapshot.ThreadStats threads,
         ApmSnapshot.RequestStats requests,
         ApmSnapshot.LatencyStats latency,
         ApmSnapshot.ApdexStats apdex,
         List<ApmSnapshot.TransactionStats> transactions,
-        List<ApmSnapshot.MetricSample> recentSamples
+        List<ApmSnapshot.MetricSample> recentSamples,
+        String applicationId,
+        String applicationName,
+        String environment,
+        String environmentLabel
 ) {
     public static ApmMetricsView from(ApmSnapshot snapshot) {
         return new ApmMetricsView(
@@ -30,12 +36,18 @@ public record ApmMetricsView(
                 snapshot.uptimeMs(),
                 snapshot.load(),
                 snapshot.heap(),
+                snapshot.nonHeap(),
+                snapshot.gc(),
                 snapshot.threads(),
                 snapshot.requests(),
                 snapshot.latency(),
                 snapshot.apdex(),
                 snapshot.transactions(),
-                snapshot.recentSamples()
+                snapshot.recentSamples(),
+                snapshot.applicationId(),
+                snapshot.applicationName(),
+                snapshot.environment(),
+                snapshot.environmentLabel()
         );
     }
 }
