@@ -162,6 +162,91 @@ import { request } from './httpClient.js';
  * @property {number} [gcCollectionTimeMs]
  * @property {number} [gcCollectionCountDelta]
  * @property {number} [gcCollectionTimeMsDelta]
+ * @property {number} [dbUsagePercent]
+ * @property {number} [externalErrorRatePercent]
+ */
+
+/**
+ * @typedef {Object} ApmDatabasePool
+ * @property {string} name
+ * @property {string} vendor
+ * @property {number} active
+ * @property {number} idle
+ * @property {number} pending
+ * @property {number} min
+ * @property {number} max
+ * @property {number} timeouts
+ * @property {number} usageAvgMs
+ * @property {number} acquireAvgMs
+ * @property {number} usagePercent
+ */
+
+/**
+ * @typedef {Object} ApmDatabaseQuery
+ * @property {string} repository
+ * @property {string} method
+ * @property {number} count
+ * @property {number} errorCount
+ * @property {number} errorRatePercent
+ * @property {number} avgMs
+ * @property {number} maxMs
+ */
+
+/**
+ * @typedef {Object} ApmDatabaseStats
+ * @property {string} status
+ * @property {string} product
+ * @property {string} validationQuery
+ * @property {ApmDatabasePool[]} [pools]
+ * @property {ApmDatabaseQuery[]} [queries]
+ * @property {number} active
+ * @property {number} idle
+ * @property {number} pending
+ * @property {number} max
+ * @property {number} timeouts
+ */
+
+/**
+ * @typedef {Object} ApmExternalService
+ * @property {string} name
+ * @property {string} kind
+ * @property {string} target
+ * @property {string} uri
+ * @property {string} method
+ * @property {number} count
+ * @property {number} errorCount
+ * @property {number} errorRatePercent
+ * @property {number} avgMs
+ * @property {number} maxMs
+ * @property {string} healthStatus
+ */
+
+/**
+ * @typedef {Object} ApmServiceMapNode
+ * @property {string} id
+ * @property {string} name
+ * @property {string} kind
+ * @property {string} status
+ * @property {number} avgMs
+ * @property {number} calls
+ * @property {number} errorRatePercent
+ * @property {string} detail
+ */
+
+/**
+ * @typedef {Object} ApmServiceMapEdge
+ * @property {string} from
+ * @property {string} to
+ * @property {number} calls
+ * @property {number} avgMs
+ * @property {number} errorRatePercent
+ * @property {string} status
+ */
+
+/**
+ * @typedef {Object} ApmServiceMap
+ * @property {ApmServiceMapNode[]} nodes
+ * @property {ApmServiceMapEdge[]} edges
  */
 
 /**
@@ -182,6 +267,9 @@ import { request } from './httpClient.js';
  * @property {ApmApdexStats} [apdex]
  * @property {ApmTransaction[]} [transactions]
  * @property {ApmMetricSample[]} recentSamples
+ * @property {ApmDatabaseStats} [database]
+ * @property {ApmExternalService[]} [externalServices]
+ * @property {ApmServiceMap} [serviceMap]
  * @property {string} [applicationId]
  * @property {string} [applicationName]
  * @property {string} [environment]
@@ -208,6 +296,9 @@ import { request } from './httpClient.js';
  * @property {ApmAlertEvent[]} [alerts]
  * @property {ApmThreadStack[]} topStacks
  * @property {ApmMetricSample[]} recentSamples
+ * @property {ApmDatabaseStats} [database]
+ * @property {ApmExternalService[]} [externalServices]
+ * @property {ApmServiceMap} [serviceMap]
  * @property {string} [targetUrl]
  * @property {'remote' | 'local' | string} [source]
  * @property {string} [applicationId]

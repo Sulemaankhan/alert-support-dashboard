@@ -18,6 +18,9 @@ public class ApmAlertTracker {
     private final AtomicReference<Boolean> errorAlertOpen = new AtomicReference<>(false);
     private final AtomicReference<Boolean> apdexAlertOpen = new AtomicReference<>(false);
     private final AtomicReference<Boolean> statusAlertOpen = new AtomicReference<>(false);
+    private final AtomicReference<Boolean> dbAlertOpen = new AtomicReference<>(false);
+    private final AtomicReference<Boolean> poolAlertOpen = new AtomicReference<>(false);
+    private final AtomicReference<Boolean> externalAlertOpen = new AtomicReference<>(false);
 
     public synchronized List<ApmSnapshot.AlertEvent> evaluate(ApmSnapshot snapshot) {
         Instant now = snapshot.timestamp() != null ? snapshot.timestamp() : Instant.now();
@@ -71,6 +74,37 @@ public class ApmAlertTracker {
             }
         }
 
+        ApmSnapshot.DatabaseStats database = snapshot.database();
+        boolean dbDown = database != null && "DOWN".equalsIgnoreCase(database.status());
+        if (dbDown && !Boolean.TRUE.equals(dbAlertOpen.getAndSet(true))) {
+            String product = database.product() != null && !database.product().isBlank()
+                    ? database.product()
+                    : "Database";
+            push(now, "critical", "DB_DOWN", product + " health is DOWN");
+        } else if (!dbDown) {
+            dbAlertOpen.set(false);
+        }
+
+        double poolUsage = database != null && database.max() > 0
+                ? (database.active() * 100.0) / database.max()
+                : 0;
+        boolean poolHot = poolUsage >= 90.0;
+        if (poolHot && !Boolean.TRUE.equals(poolAlertOpen.getAndSet(true))) {
+            push(now, "warning", "POOL_SATURATED",
+                    "Connection pool at " + round1(poolUsage) + "% (" + database.active() + "/" + database.max() + ")");
+        } else if (!poolHot) {
+            poolAlertOpen.set(false);
+        }
+
+        double extError = ApmDependencyMetrics.externalErrorRate(snapshot.externalServices());
+        boolean extHot = extError >= 10.0;
+        if (extHot && !Boolean.TRUE.equals(externalAlertOpen.getAndSet(true))) {
+            push(now, "warning", "EXTERNAL_ERROR_HIGH",
+                    "External service error rate elevated at " + round1(extError) + "%");
+        } else if (!extHot) {
+            externalAlertOpen.set(false);
+        }
+
         return recent();
     }
 
@@ -114,6 +148,33 @@ public class ApmAlertTracker {
             String rating = snapshot.apdex() != null ? snapshot.apdex().rating() : "Poor";
             active.add(new ApmSnapshot.AlertEvent(
                     now, "warning", "APDEX_LOW", "Apdex dropped to " + round2(apdex) + " (" + rating + ")"));
+        }
+
+        if (snapshot.database() != null && "DOWN".equalsIgnoreCase(snapshot.database().status())) {
+            String product = snapshot.database().product();
+            active.add(new ApmSnapshot.AlertEvent(
+                    now,
+                    "critical",
+                    "DB_DOWN",
+                    (product == null || product.isBlank() ? "Database" : product) + " health is DOWN"));
+        }
+        if (snapshot.database() != null && snapshot.database().max() > 0) {
+            double poolUsage = (snapshot.database().active() * 100.0) / snapshot.database().max();
+            if (poolUsage >= 90.0) {
+                active.add(new ApmSnapshot.AlertEvent(
+                        now,
+                        "warning",
+                        "POOL_SATURATED",
+                        "Connection pool at " + round1(poolUsage) + "%"));
+            }
+        }
+        double extError = ApmDependencyMetrics.externalErrorRate(snapshot.externalServices());
+        if (extError >= 10.0) {
+            active.add(new ApmSnapshot.AlertEvent(
+                    now,
+                    "warning",
+                    "EXTERNAL_ERROR_HIGH",
+                    "External service error rate elevated at " + round1(extError) + "%"));
         }
 
         return List.copyOf(active);

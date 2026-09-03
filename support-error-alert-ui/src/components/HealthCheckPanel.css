@@ -4093,3 +4093,207 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+.health-db__grid,
+.health-ext__grid,
+.health-map__stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.health-db__pools {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.health-db__pool {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.health-db__pool--warn {
+  border-color: rgba(180, 83, 9, 0.35);
+}
+
+.health-db__pool--danger {
+  border-color: rgba(198, 40, 40, 0.4);
+}
+
+.health-db__pool-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.health-db__pool-top span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.health-db__pool-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.9rem;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.health-db__queries {
+  margin-top: 0.25rem;
+}
+
+.health-db__err {
+  color: #c62828;
+  font-variant-numeric: tabular-nums;
+}
+
+.health-map__canvas {
+  width: 100%;
+  min-height: 280px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background:
+    radial-gradient(420px 180px at 50% 50%, rgba(37, 99, 235, 0.06), transparent 70%),
+    #fbfcfe;
+}
+
+.health-map__label {
+  font-size: 11px;
+  font-weight: 600;
+  fill: #334155;
+}
+
+.health-map__focus {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.health-map__focus-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin-bottom: 0.85rem;
+}
+
+.health-map__focus-top h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.health-map__kind {
+  display: inline-flex;
+  align-items: center;
+  height: 1.5rem;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.health-map__focus-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem 0.85rem;
+  margin: 0;
+}
+
+.health-map__focus-stats dt {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.health-map__focus-stats dd {
+  margin: 0.1rem 0 0;
+  font-size: 0.95rem;
+}
+
+.health-map__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.health-map__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.health-map__chip i {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+}
+
+.health-map__chip--on {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.health-ml__deps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+.health-ml__dep {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.health-ml__dep span {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.health-ml__dep strong {
+  display: block;
+  margin: 0.2rem 0;
+  font-size: 1.05rem;
+}
+
+.health-ml__dep em {
+  font-style: normal;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+@media (max-width: 900px) {
+  .health-db__grid,
+  .health-ext__grid,
+  .health-map__stage,
+  .health-ml__deps {
+    grid-template-columns: 1fr;
+  }
+}

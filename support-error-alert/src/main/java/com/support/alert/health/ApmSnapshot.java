@@ -24,6 +24,9 @@ public record ApmSnapshot(
         List<AlertEvent> alerts,
         List<ThreadStack> topStacks,
         List<MetricSample> recentSamples,
+        DatabaseStats database,
+        List<ExternalServiceStats> externalServices,
+        ServiceMapStats serviceMap,
         String targetUrl,
         String source,
         String applicationId,
@@ -116,8 +119,106 @@ public record ApmSnapshot(
             long gcCollectionCount,
             long gcCollectionTimeMs,
             long gcCollectionCountDelta,
-            long gcCollectionTimeMsDelta
+            long gcCollectionTimeMsDelta,
+            double dbUsagePercent,
+            double externalErrorRatePercent
     ) {
+    }
+
+    public record DatabasePoolStats(
+            String name,
+            String vendor,
+            int active,
+            int idle,
+            int pending,
+            int min,
+            int max,
+            long timeouts,
+            double usageAvgMs,
+            double acquireAvgMs,
+            double usagePercent
+    ) {
+    }
+
+    public record DatabaseQueryStats(
+            String repository,
+            String method,
+            long count,
+            long errorCount,
+            double errorRatePercent,
+            double avgMs,
+            double maxMs
+    ) {
+    }
+
+    public record DatabaseStats(
+            String status,
+            String product,
+            String validationQuery,
+            List<DatabasePoolStats> pools,
+            List<DatabaseQueryStats> queries,
+            int active,
+            int idle,
+            int pending,
+            int max,
+            long timeouts
+    ) {
+        public static DatabaseStats empty() {
+            return new DatabaseStats("UNKNOWN", "", "", List.of(), List.of(), 0, 0, 0, 0, 0);
+        }
+
+        public boolean hasSignal() {
+            return (pools != null && !pools.isEmpty())
+                    || (queries != null && !queries.isEmpty())
+                    || (product != null && !product.isBlank())
+                    || (status != null && !status.isBlank() && !"UNKNOWN".equalsIgnoreCase(status));
+        }
+    }
+
+    public record ExternalServiceStats(
+            String name,
+            String kind,
+            String target,
+            String uri,
+            String method,
+            long count,
+            long errorCount,
+            double errorRatePercent,
+            double avgMs,
+            double maxMs,
+            String healthStatus
+    ) {
+    }
+
+    public record ServiceMapNode(
+            String id,
+            String name,
+            String kind,
+            String status,
+            double avgMs,
+            long calls,
+            double errorRatePercent,
+            String detail
+    ) {
+    }
+
+    public record ServiceMapEdge(
+            String from,
+            String to,
+            long calls,
+            double avgMs,
+            double errorRatePercent,
+            String status
+    ) {
+    }
+
+    public record ServiceMapStats(
+            List<ServiceMapNode> nodes,
+            List<ServiceMapEdge> edges
+    ) {
+        public static ServiceMapStats empty() {
+            return new ServiceMapStats(List.of(), List.of());
+        }
     }
 
     public ApmSnapshot withAlerts(List<AlertEvent> nextAlerts) {
@@ -140,6 +241,9 @@ public record ApmSnapshot(
                 List.copyOf(nextAlerts),
                 topStacks,
                 recentSamples,
+                database,
+                externalServices,
+                serviceMap,
                 targetUrl,
                 source,
                 applicationId,

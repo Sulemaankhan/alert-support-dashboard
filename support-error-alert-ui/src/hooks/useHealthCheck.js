@@ -74,6 +74,14 @@ function countActiveFromSnapshot(snapshot) {
   if (Number(snapshot.heap?.usedPercent) >= 85) count += 1;
   if (Number(snapshot.requests?.errorRatePercent) >= 5) count += 1;
   if (snapshot.apdex != null && Number(snapshot.apdex.score) < 0.7) count += 1;
+  if (String(snapshot.database?.status || '').toUpperCase() === 'DOWN') count += 1;
+  const dbMax = Number(snapshot.database?.max) || 0;
+  const dbActive = Number(snapshot.database?.active) || 0;
+  if (dbMax > 0 && (dbActive * 100) / dbMax >= 90) count += 1;
+  const externals = snapshot.externalServices ?? [];
+  const extCount = externals.reduce((s, e) => s + (Number(e.count) || 0), 0);
+  const extErrors = externals.reduce((s, e) => s + (Number(e.errorCount) || 0), 0);
+  if (extCount > 0 && (extErrors * 100) / extCount >= 10) count += 1;
   return count;
 }
 
@@ -233,6 +241,9 @@ export function useHealthCheck({ enabled = true } = {}) {
             probes: { liveness: 'UNKNOWN', readiness: 'UNKNOWN' },
             alerts: [],
             topStacks: [],
+            database: data.database ?? { status: 'UNKNOWN', product: '', pools: [], queries: [], active: 0, idle: 0, pending: 0, max: 0, timeouts: 0 },
+            externalServices: data.externalServices ?? [],
+            serviceMap: data.serviceMap ?? { nodes: [], edges: [] },
           }
         : {
             ...prev,
@@ -256,6 +267,9 @@ export function useHealthCheck({ enabled = true } = {}) {
             apdex: data.apdex ?? prev.apdex,
             transactions: data.transactions ?? prev.transactions,
             recentSamples: data.recentSamples ?? prev.recentSamples,
+            database: data.database ?? prev.database,
+            externalServices: data.externalServices ?? prev.externalServices,
+            serviceMap: data.serviceMap ?? prev.serviceMap,
           };
       syncActiveFromSnapshot(next);
       return next;

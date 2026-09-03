@@ -264,6 +264,24 @@ public class ApmAlertMailService {
                     snapshot.threads().runnable(),
                     snapshot.threads().blocked()));
         }
+        if (snapshot.database() != null && snapshot.database().hasSignal()) {
+            var db = snapshot.database();
+            sb.append(String.format(
+                    Locale.US,
+                    "Database: %s %s · pool %d/%d active (pending %d)%n",
+                    db.product() == null || db.product().isBlank() ? "db" : db.product(),
+                    db.status(),
+                    db.active(),
+                    db.max(),
+                    db.pending()));
+        }
+        if (snapshot.externalServices() != null && !snapshot.externalServices().isEmpty()) {
+            sb.append(String.format(
+                    Locale.US,
+                    "External services: %d · error rate %.2f%%%n",
+                    snapshot.externalServices().size(),
+                    ApmDependencyMetrics.externalErrorRate(snapshot.externalServices())));
+        }
         if (snapshot.probes() != null) {
             sb.append("Probes: liveness=")
                     .append(snapshot.probes().liveness())
