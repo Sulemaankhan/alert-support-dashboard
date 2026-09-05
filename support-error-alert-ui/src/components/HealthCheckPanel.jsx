@@ -2131,8 +2131,8 @@ function MemoryGcBoard({ snapshot, samples = [], application = '', environment =
                 </table>
               ) : (
                 <p className="health-mem__empty">
-                  Per-class usage not available for this target. Use Refresh after the service is reachable on the same host,
-                  or analyze a local JVM target.
+                  {heapAnalysis.histogramNote
+                    || 'Per-class usage is not available yet. Click Refresh analysis while the target JVM is running on this machine.'}
                 </p>
               )}
             </article>

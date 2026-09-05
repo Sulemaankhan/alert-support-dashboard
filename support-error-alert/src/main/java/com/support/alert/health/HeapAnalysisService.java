@@ -75,17 +75,25 @@ public class HeapAnalysisService {
         Optional<String> histogram = Optional.empty();
         String note = "Memory pools from Actuator metrics.";
 
-        long pid = readRemotePid(base);
+        long metricPid = readRemotePid(base);
+        long pid = SameHostJvmLocator.resolve(target, metricPid);
         if (pid > 0) {
             histogram = JvmAttachHistogram.classHistogram(pid);
             if (histogram.isPresent()) {
                 note = "Per-class shallow usage from live GC.class_histogram on target PID "
                         + pid + " (same host). True retained size needs a heap dump.";
+            } else {
+                note += " Found PID " + pid + " but the class histogram command failed. "
+                        + "Confirm this machine can run jcmd against that process.";
             }
         }
-        if (histogram.isEmpty()) {
-            note += " Per-class histogram requires the monitor to run on the same host as the target "
-                    + "(attach to process.pid) or scrape a local JVM.";
+        if (histogram.isEmpty() && pid <= 0) {
+            if (SameHostJvmLocator.isSameHost(base)) {
+                note += " Could not resolve the target JVM PID on this host. "
+                        + "Refresh after Drugstore is running, or analyze the local JVM.";
+            } else {
+                note += " Per-class histogram needs a same-host target (attach/jcmd) or a local JVM.";
+            }
         }
 
         List<HeapAnalysisView.ClassMemoryUsage> classes = histogram
