@@ -4289,11 +4289,121 @@
   color: var(--muted);
 }
 
+.health-svc__grid {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18.5rem, 1fr));
+  gap: 0.85rem;
+}
+
+.health-svc__card {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.health-svc__card:hover,
+.health-svc__card:focus-visible {
+  border-color: rgba(37, 99, 235, 0.35);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.health-svc__card--on {
+  border-color: rgba(37, 99, 235, 0.55);
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.18);
+}
+
+.health-svc__card--up {
+  background:
+    linear-gradient(180deg, rgba(220, 252, 231, 0.45), rgba(255, 255, 255, 0.9));
+}
+
+.health-svc__card--degraded {
+  background:
+    linear-gradient(180deg, rgba(254, 243, 199, 0.5), rgba(255, 255, 255, 0.9));
+}
+
+.health-svc__card--down {
+  background:
+    linear-gradient(180deg, rgba(254, 226, 226, 0.5), rgba(255, 255, 255, 0.9));
+}
+
+.health-svc__card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  margin-bottom: 0.45rem;
+}
+
+.health-svc__card-top h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 750;
+  line-height: 1.25;
+}
+
+.health-svc__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.7rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.health-svc__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem 0.55rem;
+  margin: 0 0 0.75rem;
+}
+
+.health-svc__stats dt {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.health-svc__stats dd {
+  margin: 0.12rem 0 0;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.health-svc__probes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.health-svc__envs {
+  display: block;
+  margin-top: 0.55rem;
+  font-style: normal;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
 @media (max-width: 900px) {
   .health-db__grid,
   .health-ext__grid,
   .health-map__stage,
-  .health-ml__deps {
+  .health-ml__deps,
+  .health-svc__grid {
     grid-template-columns: 1fr;
   }
 }
