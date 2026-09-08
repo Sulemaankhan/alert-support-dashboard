@@ -65,17 +65,33 @@ final class ApmScoring {
             ApmSnapshot.HealthStats health,
             ApmSnapshot.ProbeStats probes,
             ApmSnapshot.ApdexStats apdex) {
+        return deriveStatus(heap, requests, health, probes, apdex, null);
+    }
+
+    static String deriveStatus(
+            ApmSnapshot.MemoryStats heap,
+            ApmSnapshot.RequestStats requests,
+            ApmSnapshot.HealthStats health,
+            ApmSnapshot.ProbeStats probes,
+            ApmSnapshot.ApdexStats apdex,
+            ApmSnapshot.DatabaseStats database) {
         if (health != null && "DOWN".equalsIgnoreCase(health.status())) {
             return "DOWN";
         }
         if (probes != null && ("DOWN".equalsIgnoreCase(probes.liveness()) || "DOWN".equalsIgnoreCase(probes.readiness()))) {
             return "DOWN";
         }
+        if (database != null && "DOWN".equalsIgnoreCase(database.status())) {
+            return "DOWN";
+        }
         boolean degradedHeap = heap != null && heap.usedPercent() >= 85.0;
         boolean degradedErrors = requests != null && requests.errorRatePercent() >= 5.0;
         boolean degradedApdex = apdex != null && apdex.score() < 0.7;
         boolean outOfService = health != null && "OUT_OF_SERVICE".equalsIgnoreCase(health.status());
-        if (degradedHeap || degradedErrors || degradedApdex || outOfService) {
+        boolean degradedPool = database != null
+                && database.max() > 0
+                && database.active() * 100.0 / database.max() >= 90.0;
+        if (degradedHeap || degradedErrors || degradedApdex || outOfService || degradedPool) {
             return "DEGRADED";
         }
         return "UP";

@@ -17,6 +17,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import jakarta.servlet.DispatcherType;
 import java.util.List;
 
 @Configuration
@@ -36,7 +37,9 @@ public class SecurityConfig {
         http.exceptionHandling(ex -> ex.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)));
 
         http.authorizeHttpRequests(auth -> {
+            auth.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll();
             auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll();
+            auth.requestMatchers("/error").permitAll();
             auth.requestMatchers("/api/auth/**").permitAll();
             // Liveness/readiness probes must stay reachable without a session.
             auth.requestMatchers("/actuator/health", "/actuator/health/**").permitAll();

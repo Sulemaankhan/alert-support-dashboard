@@ -85,6 +85,11 @@ export function Dashboard({ guestMode = false }) {
 
         {navView === 'health' ? (
           <HealthCheckPanel
+            catalog={health.catalog}
+            application={health.application}
+            environment={health.environment}
+            onSelectApplication={health.selectApplication}
+            onSelectEnvironment={health.selectEnvironment}
             snapshot={health.snapshot}
             alerts={health.alerts}
             activeAlerts={health.activeAlerts}

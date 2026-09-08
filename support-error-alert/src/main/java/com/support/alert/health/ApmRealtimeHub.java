@@ -12,13 +12,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
  * Shared realtime broadcaster for APM metrics and alerts.
- * One scrape loop fans out to all SSE subscribers.
+ * One scrape loop per selected application+environment fans out to that target's SSE subscribers.
  */
 @Component
 public class ApmRealtimeHub {
@@ -27,61 +25,59 @@ public class ApmRealtimeHub {
     private static final long SSE_TIMEOUT_MS = 0L;
 
     private final ApmMetricsService apmMetricsService;
-    private final ApmAlertTracker alertTracker;
     private final ApmAlertMailService alertMailService;
     private final HealthCheckProperties healthCheckProperties;
-
-    private final List<SseEmitter> apmEmitters = new CopyOnWriteArrayList<>();
-    private final List<SseEmitter> metricsEmitters = new CopyOnWriteArrayList<>();
-    private final List<SseEmitter> alertEmitters = new CopyOnWriteArrayList<>();
-
-    private final AtomicReference<ApmSnapshot> latestSnapshot = new AtomicReference<>();
-    private final AtomicReference<ApmMetricsView> latestMetrics = new AtomicReference<>();
-    private final AtomicReference<ApmAlertsView> latestAlerts = new AtomicReference<>(emptyAlerts());
-    private final AtomicReference<Set<String>> knownAlertKeys = new AtomicReference<>(Set.of());
+    private final HealthTargetCatalog targetCatalog;
+    private final TargetApmRegistry targetApmRegistry;
 
     public ApmRealtimeHub(
             ApmMetricsService apmMetricsService,
-            ApmAlertTracker alertTracker,
             ApmAlertMailService alertMailService,
-            HealthCheckProperties healthCheckProperties) {
+            HealthCheckProperties healthCheckProperties,
+            HealthTargetCatalog targetCatalog,
+            TargetApmRegistry targetApmRegistry) {
         this.apmMetricsService = apmMetricsService;
-        this.alertTracker = alertTracker;
         this.alertMailService = alertMailService;
         this.healthCheckProperties = healthCheckProperties;
+        this.targetCatalog = targetCatalog;
+        this.targetApmRegistry = targetApmRegistry;
     }
 
-    public SseEmitter subscribeApm() {
-        return register(apmEmitters);
+    public SseEmitter subscribeApm(HealthTarget target) {
+        TargetApmSession session = targetApmRegistry.session(target);
+        return register(session, session.apmEmitters);
     }
 
-    public SseEmitter subscribeMetrics() {
-        SseEmitter emitter = register(metricsEmitters);
-        ApmMetricsView metrics = latestMetrics.get();
+    public SseEmitter subscribeMetrics(HealthTarget target) {
+        TargetApmSession session = targetApmRegistry.session(target);
+        SseEmitter emitter = register(session, session.metricsEmitters);
+        ApmMetricsView metrics = session.latestMetrics.get();
         if (metrics != null) {
             sendQuiet(emitter, "metrics", metrics);
         }
         return emitter;
     }
 
-    public SseEmitter subscribeAlerts() {
-        SseEmitter emitter = register(alertEmitters);
-        // Always push a fresh view (never the blank bootstrap placeholder).
-        sendQuiet(emitter, "alerts", currentAlerts());
+    public SseEmitter subscribeAlerts(HealthTarget target) {
+        TargetApmSession session = targetApmRegistry.session(target);
+        SseEmitter emitter = register(session, session.alertEmitters);
+        sendQuiet(emitter, "alerts", currentAlerts(target));
         return emitter;
     }
 
-    public ApmMetricsView currentMetrics() {
-        ApmMetricsView cached = latestMetrics.get();
+    public ApmMetricsView currentMetrics(HealthTarget target) {
+        TargetApmSession session = targetApmRegistry.session(target);
+        ApmMetricsView cached = session.latestMetrics.get();
         if (cached != null && !isStale(cached.timestamp())) {
             return cached;
         }
-        ApmSnapshot snapshot = refreshSnapshot(false);
+        ApmSnapshot snapshot = refreshSnapshot(session, false);
         return ApmMetricsView.from(snapshot);
     }
 
-    public ApmAlertsView currentAlerts() {
-        ApmAlertsView cached = latestAlerts.get();
+    public ApmAlertsView currentAlerts(HealthTarget target) {
+        TargetApmSession session = targetApmRegistry.session(target);
+        ApmAlertsView cached = session.latestAlerts.get();
         if (cached != null
                 && cached.timestamp() != null
                 && !isStale(cached.timestamp())
@@ -89,33 +85,37 @@ public class ApmRealtimeHub {
                 && !cached.serviceName().isBlank()) {
             return cached;
         }
-        ApmSnapshot snapshot = currentSnapshot();
-        ApmAlertsView view = buildAlertsView(snapshot, List.of());
-        latestAlerts.set(view);
+        ApmSnapshot snapshot = currentSnapshot(target);
+        ApmAlertsView view = buildAlertsView(session, snapshot, List.of());
+        session.latestAlerts.set(view);
         return view;
     }
 
-    public ApmSnapshot currentSnapshot() {
-        ApmSnapshot cached = latestSnapshot.get();
+    public ApmSnapshot currentSnapshot(HealthTarget target) {
+        TargetApmSession session = targetApmRegistry.session(target);
+        ApmSnapshot cached = session.latestSnapshot.get();
         if (cached != null && !isStale(cached.timestamp())) {
             return cached;
         }
-        return refreshSnapshot(true);
+        return refreshSnapshot(session, true);
     }
 
-    private ApmSnapshot refreshSnapshot(boolean includeStacks) {
-        ApmSnapshot snapshot = apmMetricsService.snapshot(includeStacks);
-        latestSnapshot.set(snapshot);
-        latestMetrics.set(ApmMetricsView.from(snapshot));
-        latestAlerts.set(buildAlertsView(snapshot, List.of()));
+    private ApmSnapshot refreshSnapshot(TargetApmSession session, boolean includeStacks) {
+        ApmSnapshot snapshot = apmMetricsService.snapshot(session.target, includeStacks);
+        session.latestSnapshot.set(snapshot);
+        session.latestMetrics.set(ApmMetricsView.from(snapshot));
+        session.latestAlerts.set(buildAlertsView(session, snapshot, List.of()));
         return snapshot;
     }
 
-    private ApmAlertsView buildAlertsView(ApmSnapshot snapshot, List<ApmSnapshot.AlertEvent> newest) {
+    private ApmAlertsView buildAlertsView(
+            TargetApmSession session,
+            ApmSnapshot snapshot,
+            List<ApmSnapshot.AlertEvent> newest) {
         List<ApmSnapshot.AlertEvent> history = snapshot.alerts() != null
                 ? snapshot.alerts()
-                : alertTracker.recent();
-        List<ApmSnapshot.AlertEvent> active = alertTracker.activeConditions(snapshot);
+                : session.alertTracker.recent();
+        List<ApmSnapshot.AlertEvent> active = session.alertTracker.activeConditions(snapshot);
         return new ApmAlertsView(
                 Instant.now(),
                 snapshot.serviceName() != null ? snapshot.serviceName() : "",
@@ -123,7 +123,11 @@ public class ApmRealtimeHub {
                 active.size(),
                 active,
                 history,
-                newest != null ? newest : List.of()
+                newest != null ? newest : List.of(),
+                snapshot.applicationId(),
+                snapshot.applicationName(),
+                snapshot.environment(),
+                snapshot.environmentLabel()
         );
     }
 
@@ -136,12 +140,11 @@ public class ApmRealtimeHub {
 
     @Scheduled(fixedDelayString = "${support.healthcheck.realtime-interval-ms:1000}")
     public void tick() {
-        boolean hasListeners = !apmEmitters.isEmpty() || !metricsEmitters.isEmpty() || !alertEmitters.isEmpty();
-        if (!hasListeners) {
-            // Email poll runs on its own schedule when the UI is closed.
-            return;
+        for (TargetApmSession session : targetApmRegistry.all()) {
+            if (session.hasListeners()) {
+                scrapeAndFanOut(session, true);
+            }
         }
-        scrapeAndFanOut(true);
     }
 
     /**
@@ -152,46 +155,48 @@ public class ApmRealtimeHub {
         if (!healthCheckProperties.isAlertEmailConfigured()) {
             return;
         }
-        boolean hasListeners = !apmEmitters.isEmpty() || !metricsEmitters.isEmpty() || !alertEmitters.isEmpty();
-        if (hasListeners) {
-            // Live tick already emails on the same scrape.
+        HealthTarget defaultTarget = targetCatalog.defaultTarget();
+        TargetApmSession session = targetApmRegistry.session(defaultTarget);
+        if (session.hasListeners()) {
             return;
         }
-        scrapeAndFanOut(false);
+        scrapeAndFanOut(session, false);
     }
 
-    private void scrapeAndFanOut(boolean includeStacksIfNeeded) {
+    private void scrapeAndFanOut(TargetApmSession session, boolean includeStacksIfNeeded) {
         try {
-            boolean needStacks = includeStacksIfNeeded && !apmEmitters.isEmpty();
-            ApmSnapshot snapshot = apmMetricsService.snapshot(needStacks);
-            latestSnapshot.set(snapshot);
+            boolean needStacks = includeStacksIfNeeded && !session.apmEmitters.isEmpty();
+            ApmSnapshot snapshot = apmMetricsService.snapshot(session.target, needStacks);
+            session.latestSnapshot.set(snapshot);
 
             ApmMetricsView metrics = ApmMetricsView.from(snapshot);
-            latestMetrics.set(metrics);
+            session.latestMetrics.set(metrics);
 
-            List<ApmSnapshot.AlertEvent> alerts = snapshot.alerts() != null ? snapshot.alerts() : alertTracker.recent();
-            List<ApmSnapshot.AlertEvent> newest = detectNewAlerts(alerts);
-            ApmAlertsView alertsView = buildAlertsView(snapshot, newest);
-            latestAlerts.set(alertsView);
+            List<ApmSnapshot.AlertEvent> alerts = snapshot.alerts() != null
+                    ? snapshot.alerts()
+                    : session.alertTracker.recent();
+            List<ApmSnapshot.AlertEvent> newest = detectNewAlerts(session, alerts);
+            ApmAlertsView alertsView = buildAlertsView(session, snapshot, newest);
+            session.latestAlerts.set(alertsView);
 
             alertMailService.notifyActiveAlerts(snapshot, alertsView.active());
 
-            broadcast(apmEmitters, "apm", snapshot);
-            broadcast(metricsEmitters, "metrics", metrics);
-            broadcast(alertEmitters, "alerts", alertsView);
+            broadcast(session.apmEmitters, "apm", snapshot);
+            broadcast(session.metricsEmitters, "metrics", metrics);
+            broadcast(session.alertEmitters, "alerts", alertsView);
 
             if (!newest.isEmpty()) {
-                broadcast(alertEmitters, "alert", newest.get(0));
-                broadcast(apmEmitters, "alert", newest.get(0));
+                broadcast(session.alertEmitters, "alert", newest.get(0));
+                broadcast(session.apmEmitters, "alert", newest.get(0));
             }
         } catch (Exception ex) {
-            log.debug("APM realtime tick failed: {}", ex.toString());
+            log.debug("APM realtime tick failed for {}: {}", session.key(), ex.toString());
         }
     }
 
-    private List<ApmSnapshot.AlertEvent> detectNewAlerts(List<ApmSnapshot.AlertEvent> alerts) {
+    private List<ApmSnapshot.AlertEvent> detectNewAlerts(TargetApmSession session, List<ApmSnapshot.AlertEvent> alerts) {
         Set<String> keys = alerts.stream().map(this::keyOf).collect(Collectors.toSet());
-        Set<String> previous = knownAlertKeys.getAndSet(keys);
+        Set<String> previous = session.knownAlertKeys.getAndSet(keys);
         if (previous == null || previous.isEmpty()) {
             return List.of();
         }
@@ -208,8 +213,8 @@ public class ApmRealtimeHub {
         return alert.code() + "|" + (alert.timestamp() != null ? alert.timestamp().toString() : "") + "|" + alert.message();
     }
 
-    private SseEmitter register(List<SseEmitter> bucket) {
-        boolean wasIdle = apmEmitters.isEmpty() && metricsEmitters.isEmpty() && alertEmitters.isEmpty();
+    private SseEmitter register(TargetApmSession session, List<SseEmitter> bucket) {
+        boolean wasIdle = !session.hasListeners();
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
         bucket.add(emitter);
         Runnable remove = () -> bucket.remove(emitter);
@@ -220,8 +225,7 @@ public class ApmRealtimeHub {
         });
         emitter.onError(ex -> remove.run());
         if (wasIdle) {
-            // First subscriber: scrape immediately instead of waiting for the next schedule tick.
-            Thread starter = new Thread(this::tick, "apm-realtime-kick");
+            Thread starter = new Thread(() -> scrapeAndFanOut(session, true), "apm-realtime-kick-" + session.key());
             starter.setDaemon(true);
             starter.start();
         }
@@ -252,10 +256,6 @@ public class ApmRealtimeHub {
         } catch (IOException | IllegalStateException ignored) {
             /* subscriber will retry */
         }
-    }
-
-    private static ApmAlertsView emptyAlerts() {
-        return new ApmAlertsView(Instant.now(), "", "UNKNOWN", 0, List.of(), List.of(), List.of());
     }
 
     /** For Spring MVC content type checks. */

@@ -58,7 +58,8 @@ public class ApmAlertMailService {
         List<ApmSnapshot.AlertEvent> due = new ArrayList<>();
         for (ApmSnapshot.AlertEvent alert : active) {
             String code = alert.code() != null ? alert.code() : "UNKNOWN";
-            Long last = lastSentAtByCode.get(code);
+            String key = cooldownKey(snapshot, code);
+            Long last = lastSentAtByCode.get(key);
             if (last != null && now - last < cooldownMs) {
                 continue;
             }
@@ -80,7 +81,7 @@ public class ApmAlertMailService {
                     body);
             // Still mark cooldown so logs are not spammed every poll.
             for (ApmSnapshot.AlertEvent alert : due) {
-                lastSentAtByCode.put(alert.code() != null ? alert.code() : "UNKNOWN", now);
+                lastSentAtByCode.put(cooldownKey(snapshot, alert.code() != null ? alert.code() : "UNKNOWN"), now);
             }
             return;
         }
@@ -93,11 +94,13 @@ public class ApmAlertMailService {
             message.setText(body);
             mailSender.send(message);
             for (ApmSnapshot.AlertEvent alert : due) {
-                lastSentAtByCode.put(alert.code() != null ? alert.code() : "UNKNOWN", now);
+                lastSentAtByCode.put(cooldownKey(snapshot, alert.code() != null ? alert.code() : "UNKNOWN"), now);
             }
             log.info(
-                    "APM alert metrics emailed to {} (service={}, status={}, alerts={})",
+                    "APM alert metrics emailed to {} (app={} env={} service={}, status={}, alerts={})",
                     to,
+                    snapshot.applicationId(),
+                    snapshot.environment(),
                     snapshot.serviceName(),
                     snapshot.status(),
                     due.size());
@@ -117,14 +120,23 @@ public class ApmAlertMailService {
         return "noreply@localhost";
     }
 
+    private static String cooldownKey(ApmSnapshot snapshot, String code) {
+        String app = snapshot.applicationId() != null ? snapshot.applicationId() : "";
+        String env = snapshot.environment() != null ? snapshot.environment() : "";
+        return app + "|" + env + "|" + code;
+    }
+
     private static String buildSubject(ApmSnapshot snapshot, List<ApmSnapshot.AlertEvent> due) {
         String service = snapshot.serviceName() != null ? snapshot.serviceName() : "service";
+        String env = snapshot.environment() != null && !snapshot.environment().isBlank()
+                ? "/" + snapshot.environment()
+                : "";
         String status = snapshot.status() != null ? snapshot.status() : "UNKNOWN";
         String code = due.get(0).code() != null ? due.get(0).code() : "ALERT";
         if (due.size() == 1) {
-            return "[APM " + status + "] " + service + " · " + code;
+            return "[APM " + status + "] " + service + env + " · " + code;
         }
-        return "[APM " + status + "] " + service + " · " + due.size() + " alerts (" + code + "…)";
+        return "[APM " + status + "] " + service + env + " · " + due.size() + " alerts (" + code + "…)";
     }
 
     private static String buildBody(
@@ -136,6 +148,11 @@ public class ApmAlertMailService {
         sb.append("============================\n\n");
         sb.append("Time: ").append(TIME.format(Instant.now())).append('\n');
         sb.append("Service: ").append(nullToDash(snapshot.serviceName())).append('\n');
+        sb.append("Application: ").append(nullToDash(snapshot.applicationName())).append('\n');
+        sb.append("Environment: ").append(nullToDash(
+                snapshot.environmentLabel() != null && !snapshot.environmentLabel().isBlank()
+                        ? snapshot.environmentLabel()
+                        : snapshot.environment())).append('\n');
         sb.append("Status: ").append(nullToDash(snapshot.status())).append('\n');
         sb.append("Target: ").append(nullToDash(snapshot.targetUrl())).append('\n');
         sb.append("Source: ").append(nullToDash(snapshot.source())).append('\n');
@@ -202,6 +219,28 @@ public class ApmAlertMailService {
                     snapshot.apdex().score(),
                     snapshot.apdex().rating()));
         }
+        if (snapshot.gc() != null) {
+            var gc = snapshot.gc();
+            sb.append(String.format(
+                    Locale.US,
+                    "GC: %d collections (%d ms total) · Δ %d / %d ms%n",
+                    gc.collectionCount(),
+                    gc.collectionTimeMs(),
+                    gc.collectionCountDelta(),
+                    gc.collectionTimeMsDelta()));
+            if (gc.collectors() != null && !gc.collectors().isEmpty()) {
+                for (ApmSnapshot.GcCollectorStats collector : gc.collectors()) {
+                    sb.append(String.format(
+                            Locale.US,
+                            "  · %s: %d collections, %d ms (Δ %d / %d ms)%n",
+                            collector.name(),
+                            collector.collectionCount(),
+                            collector.collectionTimeMs(),
+                            collector.collectionCountDelta(),
+                            collector.collectionTimeMsDelta()));
+                }
+            }
+        }
         if (snapshot.heap() != null) {
             sb.append(String.format(
                     Locale.US,
@@ -224,6 +263,24 @@ public class ApmAlertMailService {
                     snapshot.threads().live(),
                     snapshot.threads().runnable(),
                     snapshot.threads().blocked()));
+        }
+        if (snapshot.database() != null && snapshot.database().hasSignal()) {
+            var db = snapshot.database();
+            sb.append(String.format(
+                    Locale.US,
+                    "Database: %s %s · pool %d/%d active (pending %d)%n",
+                    db.product() == null || db.product().isBlank() ? "db" : db.product(),
+                    db.status(),
+                    db.active(),
+                    db.max(),
+                    db.pending()));
+        }
+        if (snapshot.externalServices() != null && !snapshot.externalServices().isEmpty()) {
+            sb.append(String.format(
+                    Locale.US,
+                    "External services: %d · error rate %.2f%%%n",
+                    snapshot.externalServices().size(),
+                    ApmDependencyMetrics.externalErrorRate(snapshot.externalServices())));
         }
         if (snapshot.probes() != null) {
             sb.append("Probes: liveness=")

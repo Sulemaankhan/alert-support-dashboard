@@ -1,15 +1,16 @@
 package com.support.alert.health;
 
 import com.sun.management.OperatingSystemMXBean;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthComponent;
 import org.springframework.boot.actuate.health.HealthEndpoint;
 import org.springframework.boot.actuate.health.SystemHealth;
 import org.springframework.stereotype.Service;
 
-import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
@@ -30,55 +31,50 @@ import java.util.concurrent.atomic.AtomicReference;
 @Service
 public class ApmMetricsService {
 
-    private static final int MAX_SAMPLES = 120;
     private static final int TOP_STACK_THREADS = 8;
     private static final int STACK_FRAMES = 12;
 
     private final String localServiceName;
     private final HealthCheckProperties healthCheckProperties;
-    private final RemoteApmCollector remoteApmCollector;
-    private final ApmAlertTracker alertTracker;
+    private final TargetApmRegistry targetApmRegistry;
     private final MeterRegistry meterRegistry;
     private final HealthEndpoint healthEndpoint;
-    private final List<ApmSnapshot.MetricSample> recentSamples = new ArrayList<>();
-    private final AtomicReference<RequestCounters> previousCounters = new AtomicReference<>(RequestCounters.ZERO);
-    private final AtomicReference<Instant> previousSampleAt = new AtomicReference<>(null);
-    private final RpmWindow rpmWindow = new RpmWindow(300_000L);
 
     public ApmMetricsService(
             @Value("${spring.application.name:support-error-alert}") String localServiceName,
             HealthCheckProperties healthCheckProperties,
-            RemoteApmCollector remoteApmCollector,
-            ApmAlertTracker alertTracker,
+            TargetApmRegistry targetApmRegistry,
             MeterRegistry meterRegistry,
             HealthEndpoint healthEndpoint) {
         this.localServiceName = localServiceName;
         this.healthCheckProperties = healthCheckProperties;
-        this.remoteApmCollector = remoteApmCollector;
-        this.alertTracker = alertTracker;
+        this.targetApmRegistry = targetApmRegistry;
         this.meterRegistry = meterRegistry;
         this.healthEndpoint = healthEndpoint;
     }
 
-    public synchronized ApmSnapshot snapshot() {
-        return snapshot(true);
+    public synchronized ApmSnapshot snapshot(HealthTarget target) {
+        return snapshot(target, true);
     }
 
-    public synchronized ApmSnapshot snapshot(boolean includeStacks) {
-        ApmSnapshot base = healthCheckProperties.isRemoteConfigured()
-                ? remoteApmCollector.collect(includeStacks)
-                : localSnapshot(includeStacks);
-        return base.withAlerts(alertTracker.evaluate(base));
+    public synchronized ApmSnapshot snapshot(HealthTarget target, boolean includeStacks) {
+        TargetApmSession session = targetApmRegistry.session(target);
+        ApmSnapshot base = target.isRemote() && session.remoteCollector != null
+                ? session.remoteCollector.collect(includeStacks)
+                : localSnapshot(target, session, includeStacks);
+        return base.withAlerts(session.alertTracker.evaluate(base));
     }
 
-    public synchronized List<ApmSnapshot.ThreadStack> fullStackDump() {
-        if (healthCheckProperties.isRemoteConfigured()) {
-            return remoteApmCollector.fullStackDump();
+    public synchronized List<ApmSnapshot.ThreadStack> fullStackDump(HealthTarget target) {
+        TargetApmSession session = targetApmRegistry.session(target);
+        if (target.isRemote() && session.remoteCollector != null) {
+            return session.remoteCollector.fullStackDump();
         }
         return readTopStacks(ManagementFactory.getThreadMXBean(), 40, 40);
     }
 
-    private ApmSnapshot localSnapshot(boolean includeStacks) {
+    private ApmSnapshot localSnapshot(HealthTarget target, TargetApmSession session, boolean includeStacks) {
+        LocalTargetMetrics metrics = session.localMetrics;
         double apdexThreshold = healthCheckProperties.getApdexThresholdMs() > 0
                 ? healthCheckProperties.getApdexThresholdMs()
                 : 500;
@@ -89,11 +85,11 @@ public class ApmMetricsService {
         ApmSnapshot.MemoryStats heap = toMemoryStats(memory.getHeapMemoryUsage());
         ApmSnapshot.MemoryStats nonHeap = toMemoryStats(memory.getNonHeapMemoryUsage());
         ApmSnapshot.LoadStats load = readLoad();
-        ApmSnapshot.GcStats gc = readGc();
+        ApmSnapshot.GcStats gc = metrics.gcMetricsTracker.build(GcMetricsTracker.fromLocalMxBeans());
         ApmSnapshot.ThreadStats threadStats = readThreadStats(threads);
         ApmSnapshot.HealthStats health = readHealth();
         ApmSnapshot.ProbeStats probes = readProbes();
-        RequestBundle requestBundle = readRequests();
+        RequestBundle requestBundle = readRequests(metrics);
         List<ApmSnapshot.TransactionStats> transactions = readTransactions(apdexThreshold);
         ApmSnapshot.ApdexStats apdex = transactions.isEmpty()
                 ? ApmScoring.apdex(requestBundle.requests().avgResponseTimeMs(), apdexThreshold)
@@ -104,27 +100,35 @@ public class ApmMetricsService {
                 apdexThreshold
         );
         List<ApmSnapshot.ThreadStack> topStacks = includeStacks ? readTopStacks(threads) : List.of();
+        ApmSnapshot.DatabaseStats database = readDatabase(health);
+        List<ApmSnapshot.ExternalServiceStats> externals = readExternalServices(health);
+        String serviceName = target.resolvedServiceName(localServiceName);
+        String status = ApmScoring.deriveStatus(heap, requestBundle.requests(), health, probes, apdex, database);
+        ApmSnapshot.ServiceMapStats serviceMap = ApmDependencyMetrics.serviceMap(
+                serviceName, status, database, externals);
 
         Instant now = Instant.now();
-        recentSamples.add(new ApmSnapshot.MetricSample(
+        metrics.addSample(new ApmSnapshot.MetricSample(
                 now,
                 load.processCpuLoad(),
                 heap.usedPercent(),
+                nonHeap.usedPercent(),
                 requestBundle.requests().requestsPerMinute(),
                 requestBundle.requests().errorRatePercent(),
                 requestBundle.requests().avgResponseTimeMs(),
-                apdex.score()
+                apdex.score(),
+                gc.collectionCount(),
+                gc.collectionTimeMs(),
+                gc.collectionCountDelta(),
+                gc.collectionTimeMsDelta(),
+                ApmDependencyMetrics.usagePercent(database.active(), database.max()),
+                ApmDependencyMetrics.externalErrorRate(externals)
         ));
-        while (recentSamples.size() > MAX_SAMPLES) {
-            recentSamples.remove(0);
-        }
-
-        String status = ApmScoring.deriveStatus(heap, requestBundle.requests(), health, probes, apdex);
 
         return new ApmSnapshot(
                 status,
                 now,
-                localServiceName,
+                serviceName,
                 runtime.getUptime(),
                 load,
                 heap,
@@ -139,9 +143,16 @@ public class ApmMetricsService {
                 transactions,
                 List.of(),
                 topStacks,
-                List.copyOf(recentSamples),
+                List.copyOf(metrics.recentSamples),
+                database,
+                externals,
+                serviceMap,
                 "local",
-                "local"
+                "local",
+                target.applicationId(),
+                target.applicationName(),
+                target.environmentId(),
+                target.environmentLabel()
         );
     }
 
@@ -205,22 +216,6 @@ public class ApmMetricsService {
         );
     }
 
-    private static ApmSnapshot.GcStats readGc() {
-        long count = 0;
-        long time = 0;
-        for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
-            long c = gc.getCollectionCount();
-            long t = gc.getCollectionTime();
-            if (c > 0) {
-                count += c;
-            }
-            if (t > 0) {
-                time += t;
-            }
-        }
-        return new ApmSnapshot.GcStats(count, time);
-    }
-
     private static ApmSnapshot.ThreadStats readThreadStats(ThreadMXBean threads) {
         int runnable = 0;
         int blocked = 0;
@@ -248,6 +243,231 @@ public class ApmMetricsService {
                 blocked,
                 waiting
         );
+    }
+
+    private ApmSnapshot.DatabaseStats readDatabase(ApmSnapshot.HealthStats health) {
+        DbIdentity identity = readDbIdentity(health);
+        List<ApmSnapshot.DatabasePoolStats> pools = readPools();
+        List<ApmSnapshot.DatabaseQueryStats> queries = readRepositoryQueries();
+        return ApmDependencyMetrics.database(
+                identity.status(),
+                identity.product(),
+                identity.validationQuery(),
+                pools,
+                queries
+        );
+    }
+
+    private DbIdentity readDbIdentity(ApmSnapshot.HealthStats health) {
+        String status = health != null && health.components() != null
+                ? health.components().getOrDefault("db", "UNKNOWN")
+                : "UNKNOWN";
+        String product = "";
+        String validation = "";
+        try {
+            HealthComponent component = healthEndpoint.healthForPath("db");
+            if (component instanceof Health details) {
+                status = details.getStatus().getCode();
+                Object database = details.getDetails().get("database");
+                Object query = details.getDetails().get("validationQuery");
+                product = database != null ? String.valueOf(database) : "";
+                validation = query != null ? String.valueOf(query) : "";
+            } else if (component != null) {
+                status = component.getStatus().getCode();
+            }
+        } catch (Exception ignored) {
+            // no db indicator on this JVM
+        }
+        return new DbIdentity(status, product, validation);
+    }
+
+    private List<ApmSnapshot.DatabasePoolStats> readPools() {
+        Map<String, PoolAgg> byName = new LinkedHashMap<>();
+        collectPoolGauge(byName, "hikaricp.connections.active", "hikaricp", "active");
+        collectPoolGauge(byName, "hikaricp.connections.idle", "hikaricp", "idle");
+        collectPoolGauge(byName, "hikaricp.connections.pending", "hikaricp", "pending");
+        collectPoolGauge(byName, "hikaricp.connections.min", "hikaricp", "min");
+        collectPoolGauge(byName, "hikaricp.connections.max", "hikaricp", "max");
+        collectPoolCounter(byName, "hikaricp.connections.timeout", "hikaricp");
+        collectPoolTimer(byName, "hikaricp.connections.usage", "hikaricp", "usage");
+        collectPoolTimer(byName, "hikaricp.connections.acquire", "hikaricp", "acquire");
+        collectPoolGauge(byName, "jdbc.connections.active", "jdbc", "active");
+        collectPoolGauge(byName, "jdbc.connections.min", "jdbc", "min");
+        collectPoolGauge(byName, "jdbc.connections.max", "jdbc", "max");
+
+        List<ApmSnapshot.DatabasePoolStats> pools = new ArrayList<>();
+        for (PoolAgg agg : byName.values()) {
+            pools.add(new ApmSnapshot.DatabasePoolStats(
+                    agg.name,
+                    agg.vendor,
+                    (int) agg.active,
+                    (int) agg.idle,
+                    (int) agg.pending,
+                    (int) agg.min,
+                    (int) agg.max,
+                    (long) agg.timeouts,
+                    agg.usageCount > 0 ? round2(agg.usageMs / agg.usageCount) : 0,
+                    agg.acquireCount > 0 ? round2(agg.acquireMs / agg.acquireCount) : 0,
+                    ApmDependencyMetrics.usagePercent((int) agg.active, (int) agg.max)
+            ));
+        }
+        return pools;
+    }
+
+    private void collectPoolGauge(Map<String, PoolAgg> byName, String metric, String vendor, String field) {
+        for (Gauge gauge : meterRegistry.find(metric).gauges()) {
+            PoolAgg agg = poolAgg(byName, gauge.getId().getTag("pool"), gauge.getId().getTag("name"), vendor);
+            double value = gauge.value();
+            if (Double.isNaN(value) || value < 0) {
+                continue;
+            }
+            switch (field) {
+                case "active" -> agg.active = value;
+                case "idle" -> agg.idle = value;
+                case "pending" -> agg.pending = value;
+                case "min" -> agg.min = value;
+                case "max" -> agg.max = value;
+                default -> {
+                }
+            }
+        }
+    }
+
+    private void collectPoolCounter(Map<String, PoolAgg> byName, String metric, String vendor) {
+        meterRegistry.find(metric).counters().forEach(counter -> {
+            PoolAgg agg = poolAgg(byName, counter.getId().getTag("pool"), counter.getId().getTag("name"), vendor);
+            agg.timeouts += Math.max(0, counter.count());
+        });
+    }
+
+    private void collectPoolTimer(Map<String, PoolAgg> byName, String metric, String vendor, String field) {
+        for (Timer timer : meterRegistry.find(metric).timers()) {
+            PoolAgg agg = poolAgg(byName, timer.getId().getTag("pool"), timer.getId().getTag("name"), vendor);
+            long count = timer.count();
+            double totalMs = timer.totalTime(TimeUnit.MILLISECONDS);
+            if ("usage".equals(field)) {
+                agg.usageCount += count;
+                agg.usageMs += totalMs;
+            } else {
+                agg.acquireCount += count;
+                agg.acquireMs += totalMs;
+            }
+        }
+    }
+
+    private static PoolAgg poolAgg(Map<String, PoolAgg> byName, String poolTag, String nameTag, String vendor) {
+        String name = (poolTag != null && !poolTag.isBlank())
+                ? poolTag
+                : (nameTag != null && !nameTag.isBlank() ? nameTag : vendor);
+        String key = vendor + ":" + name;
+        return byName.computeIfAbsent(key, ignored -> new PoolAgg(name, vendor));
+    }
+
+    private List<ApmSnapshot.DatabaseQueryStats> readRepositoryQueries() {
+        Map<String, QueryAgg> byKey = new HashMap<>();
+        for (Timer timer : meterRegistry.find("spring.data.repository.invocations").timers()) {
+            String repository = timer.getId().getTag("repository");
+            String method = timer.getId().getTag("method");
+            if (repository == null || repository.isBlank()) {
+                continue;
+            }
+            String key = repository + "#" + (method == null ? "*" : method);
+            QueryAgg agg = byKey.computeIfAbsent(key, ignored -> new QueryAgg(
+                    simpleClassName(repository),
+                    method == null || method.isBlank() ? "*" : method
+            ));
+            long count = timer.count();
+            agg.count += count;
+            agg.totalMs += timer.totalTime(TimeUnit.MILLISECONDS);
+            agg.maxMs = Math.max(agg.maxMs, timer.max(TimeUnit.MILLISECONDS));
+            String outcome = timer.getId().getTag("outcome");
+            String exception = timer.getId().getTag("exception");
+            if ((outcome != null && outcome.toUpperCase().contains("ERROR"))
+                    || (exception != null && !"none".equalsIgnoreCase(exception) && !exception.isBlank())) {
+                agg.errors += count;
+            }
+        }
+        List<ApmSnapshot.DatabaseQueryStats> queries = new ArrayList<>();
+        for (QueryAgg agg : byKey.values()) {
+            queries.add(new ApmSnapshot.DatabaseQueryStats(
+                    agg.repository,
+                    agg.method,
+                    agg.count,
+                    agg.errors,
+                    agg.count > 0 ? round2((agg.errors * 100.0) / agg.count) : 0,
+                    agg.count > 0 ? round2(agg.totalMs / agg.count) : 0,
+                    round2(agg.maxMs)
+            ));
+        }
+        return ApmDependencyMetrics.limitQueries(queries);
+    }
+
+    private List<ApmSnapshot.ExternalServiceStats> readExternalServices(ApmSnapshot.HealthStats health) {
+        Map<String, ExtAgg> byKey = new LinkedHashMap<>();
+        for (Timer timer : meterRegistry.find("http.client.requests").timers()) {
+            String uri = timer.getId().getTag("uri");
+            String clientName = timer.getId().getTag("clientName");
+            if (clientName == null) {
+                clientName = timer.getId().getTag("client.name");
+            }
+            String method = timer.getId().getTag("method");
+            String name = ApmDependencyMetrics.displayName(clientName, uri);
+            String key = name + "|" + (uri == null ? "" : uri) + "|" + (method == null ? "*" : method);
+            ExtAgg agg = byKey.computeIfAbsent(key, ignored -> new ExtAgg(
+                    name,
+                    "http",
+                    ApmDependencyMetrics.hostOf(uri),
+                    uri == null ? "" : uri,
+                    method == null || method.isBlank() ? "*" : method
+            ));
+            long count = timer.count();
+            agg.count += count;
+            agg.totalMs += timer.totalTime(TimeUnit.MILLISECONDS);
+            agg.maxMs = Math.max(agg.maxMs, timer.max(TimeUnit.MILLISECONDS));
+            if (isHttpServerError(timer.getId().getTag("status"), timer.getId().getTag("outcome"))) {
+                agg.errors += count;
+            }
+        }
+
+        if (health != null && health.components() != null) {
+            health.components().forEach((name, status) -> {
+                if (ApmDependencyMetrics.isLocalInfraComponent(name) || "db".equalsIgnoreCase(name)) {
+                    return;
+                }
+                String kind = ApmDependencyMetrics.classifyHealthComponent(name);
+                String key = "health:" + name;
+                byKey.computeIfAbsent(key, ignored -> new ExtAgg(name, kind, name, "", "*")).healthStatus = status;
+            });
+        }
+
+        List<ApmSnapshot.ExternalServiceStats> list = new ArrayList<>();
+        for (ExtAgg agg : byKey.values()) {
+            String healthStatus = agg.healthStatus;
+            if (healthStatus == null || healthStatus.isBlank()) {
+                healthStatus = agg.errors > 0 && agg.count > 0 && (agg.errors * 100.0 / agg.count) >= 10
+                        ? "DEGRADED"
+                        : "UP";
+            }
+            list.add(new ApmSnapshot.ExternalServiceStats(
+                    agg.name,
+                    agg.kind,
+                    agg.target,
+                    agg.uri,
+                    agg.method,
+                    agg.count,
+                    agg.errors,
+                    agg.count > 0 ? round2((agg.errors * 100.0) / agg.count) : 0,
+                    agg.count > 0 ? round2(agg.totalMs / agg.count) : 0,
+                    round2(agg.maxMs),
+                    healthStatus
+            ));
+        }
+        return ApmDependencyMetrics.limitExternals(list);
+    }
+
+    private static String simpleClassName(String repository) {
+        int dot = repository.lastIndexOf('.');
+        return dot >= 0 ? repository.substring(dot + 1) : repository;
     }
 
     private ApmSnapshot.HealthStats readHealth() {
@@ -287,7 +507,7 @@ public class ApmMetricsService {
         return component.getStatus().getCode();
     }
 
-    private RequestBundle readRequests() {
+    private RequestBundle readRequests(LocalTargetMetrics metrics) {
         Collection<Timer> timers = meterRegistry.find("http.server.requests").timers();
         long total = 0;
         long errors = 0;
@@ -310,30 +530,31 @@ public class ApmMetricsService {
         }
 
         Instant now = Instant.now();
-        RequestCounters current = new RequestCounters(total, errors, totalMs);
-        Instant previousAt = previousSampleAt.get();
+        LocalTargetMetrics.RequestCounters current =
+                new LocalTargetMetrics.RequestCounters(total, errors, totalMs);
+        Instant previousAt = metrics.previousSampleAt.get();
         double avgMs = total > 0 ? round2(totalMs / total) : 0.0;
         double overallErrorRate = total > 0 ? round2((errors * 100.0) / total) : 0.0;
 
-        if (previousAt == null || current.total < previousCounters.get().total) {
-            previousCounters.set(current);
-            previousSampleAt.set(now);
-            rpmWindow.clear();
-            rpmWindow.observe(now.toEpochMilli(), total);
+        if (previousAt == null || current.total() < metrics.previousCounters.get().total()) {
+            metrics.previousCounters.set(current);
+            metrics.previousSampleAt.set(now);
+            metrics.rpmWindow.clear();
+            metrics.rpmWindow.observe(now.toEpochMilli(), total);
             return new RequestBundle(
                     new ApmSnapshot.RequestStats(total, errors, 0, 0, 0, overallErrorRate, avgMs),
                     round2(maxMs)
             );
         }
 
-        RequestCounters previous = previousCounters.get();
-        long reqDelta = Math.max(0, current.total - previous.total);
-        long errDelta = Math.max(0, current.errors - previous.errors);
-        double rpm = rpmWindow.observe(now.toEpochMilli(), total);
+        LocalTargetMetrics.RequestCounters previous = metrics.previousCounters.get();
+        long reqDelta = Math.max(0, current.total() - previous.total());
+        long errDelta = Math.max(0, current.errors() - previous.errors());
+        double rpm = metrics.rpmWindow.observe(now.toEpochMilli(), total);
         double errorRate = reqDelta > 0 ? round2((errDelta * 100.0) / reqDelta) : overallErrorRate;
 
-        previousCounters.set(current);
-        previousSampleAt.set(now);
+        metrics.previousCounters.set(current);
+        metrics.previousSampleAt.set(now);
         return new RequestBundle(
                 new ApmSnapshot.RequestStats(total, errors, reqDelta, errDelta, rpm, errorRate, avgMs),
                 round2(maxMs)
@@ -395,6 +616,13 @@ public class ApmMetricsService {
         return Math.round(value * 10.0) / 10.0;
     }
 
+    private static boolean isHttpServerError(String status, String outcome) {
+        if (outcome != null && "SERVER_ERROR".equalsIgnoreCase(outcome)) {
+            return true;
+        }
+        return status != null && !status.isBlank() && status.charAt(0) == '5';
+    }
+
     private static boolean isHttpError(String status, String outcome) {
         if (outcome != null
                 && ("SERVER_ERROR".equalsIgnoreCase(outcome) || "CLIENT_ERROR".equalsIgnoreCase(outcome))) {
@@ -414,11 +642,65 @@ public class ApmMetricsService {
         return Math.round(value * 100.0) / 100.0;
     }
 
-    private record RequestCounters(long total, long errors, double totalMs) {
-        static final RequestCounters ZERO = new RequestCounters(0, 0, 0);
+    private record RequestBundle(ApmSnapshot.RequestStats requests, double maxMs) {
     }
 
-    private record RequestBundle(ApmSnapshot.RequestStats requests, double maxMs) {
+    private record DbIdentity(String status, String product, String validationQuery) {
+    }
+
+    private static final class PoolAgg {
+        final String name;
+        final String vendor;
+        double active;
+        double idle;
+        double pending;
+        double min;
+        double max;
+        double timeouts;
+        double usageMs;
+        long usageCount;
+        double acquireMs;
+        long acquireCount;
+
+        PoolAgg(String name, String vendor) {
+            this.name = name;
+            this.vendor = vendor;
+        }
+    }
+
+    private static final class QueryAgg {
+        final String repository;
+        final String method;
+        long count;
+        long errors;
+        double totalMs;
+        double maxMs;
+
+        QueryAgg(String repository, String method) {
+            this.repository = repository;
+            this.method = method;
+        }
+    }
+
+    private static final class ExtAgg {
+        final String name;
+        final String kind;
+        final String target;
+        final String uri;
+        final String method;
+        long count;
+        long errors;
+        double totalMs;
+        double maxMs;
+        String healthStatus = "";
+
+        ExtAgg(String name, String kind, String target, String uri, String method) {
+            this.name = name;
+            this.kind = kind;
+            this.target = target;
+            this.uri = uri;
+            this.method = method;
+        }
     }
 
     private static final class Agg {

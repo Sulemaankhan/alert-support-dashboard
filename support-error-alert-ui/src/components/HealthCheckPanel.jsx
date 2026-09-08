@@ -1,14 +1,19 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { SECTION } from '../constants/branding.js';
 import { NAV_SECTION } from '../constants/nav.js';
+import * as healthService from '../services/healthService.js';
 import './AlertSourcePanel.css';
 import './HealthCheckPanel.css';
 
 const APM_TABS = [
   { id: 'overview', label: 'Overview' },
+  { id: 'memory', label: 'Memory' },
   { id: 'transactions', label: 'Transactions' },
   { id: 'latency', label: 'Latency' },
   { id: 'errors', label: 'Errors' },
+  { id: 'database', label: 'Database' },
+  { id: 'map', label: 'Service map' },
+  { id: 'external', label: 'External' },
   { id: 'alerts', label: 'Alerts' },
   { id: 'stack', label: 'Stack' },
 ];
@@ -1742,6 +1747,403 @@ function LatencyBoard({ snapshot, transactions, samples = [], live = false, tick
 }
 
 /**
+ * Heap, non-heap, and GC collector metrics for the selected target.
+ * @param {{
+ *   snapshot: import('../services/healthService.js').ApmSnapshot | null,
+ *   samples?: any[],
+ *   application?: string,
+ *   environment?: string,
+ *   live?: boolean,
+ *   tick?: number,
+ * }} props
+ */
+function MemoryGcBoard({ snapshot, samples = [], application = '', environment = '', live = false, tick = 0 }) {
+  const [heapAnalysis, setHeapAnalysis] = useState(/** @type {import('../services/healthService.js').HeapAnalysisView | null} */ (null));
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState(/** @type {string | null} */ (null));
+  const [classSort, setClassSort] = useState(/** @type {'bytes' | 'instances' | 'name'} */ ('bytes'));
+
+  const loadHeapAnalysis = useCallback(async () => {
+    if (!application || !environment) return;
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    try {
+      const data = await healthService.fetchHeapAnalysis(application, environment);
+      setHeapAnalysis(data);
+    } catch (e) {
+      setAnalysisError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }, [application, environment]);
+
+  useEffect(() => {
+    loadHeapAnalysis();
+  }, [loadHeapAnalysis]);
+  const heap = snapshot?.heap;
+  const nonHeap = snapshot?.nonHeap;
+  const gc = snapshot?.gc;
+  const heapPct = Number(heap?.usedPercent) || 0;
+  const nonHeapPct = Number(nonHeap?.usedPercent) || 0;
+  const gcCountDelta = Number(gc?.collectionCountDelta) || 0;
+  const gcTimeDelta = Number(gc?.collectionTimeMsDelta) || 0;
+  const collectors = gc?.collectors ?? [];
+  const heapTone = heapPct >= 85 ? 'danger' : heapPct >= 70 ? 'warn' : 'ok';
+  const gcTone = gcTimeDelta >= 200 || gcCountDelta >= 5 ? 'warn' : 'ok';
+  const heapTrend = trendFromSamples(samples, (s) => s.heapUsedPercent);
+  const nonHeapTrend = trendFromSamples(samples, (s) => s.nonHeapUsedPercent ?? 0);
+  const gcTimeTrend = trendFromSamples(samples, (s) => s.gcCollectionTimeMsDelta ?? 0);
+
+  const sortedClasses = useMemo(() => {
+    const list = [...(heapAnalysis?.classes ?? [])];
+    list.sort((a, b) => {
+      if (classSort === 'instances') return b.instanceCount - a.instanceCount;
+      if (classSort === 'name') return String(a.className).localeCompare(String(b.className));
+      return b.shallowBytes - a.shallowBytes;
+    });
+    return list;
+  }, [heapAnalysis?.classes, classSort]);
+
+  return (
+    <div className={`health-mem${live ? ' health-mem--live' : ''}`}>
+      <div className="health-mem__toolbar">
+        <div>
+          <h3 className="health-stack__title">Memory &amp; GC</h3>
+          <p className="health-metric__sub">
+            JVM heap, non-heap, and garbage collector activity · {formatRelative(snapshot?.timestamp)}
+          </p>
+        </div>
+        <span className={live ? 'health-live health-live--on' : 'health-live health-live--off'}>
+          <span className="health-live__dot" aria-hidden="true" />
+          {live ? 'Streaming' : 'Waiting…'}
+        </span>
+      </div>
+
+      <div className="health-mem__kpis">
+        <div className={`health-mem__kpi health-mem__kpi--${heapTone}`}>
+          <span>Heap used</span>
+          <strong className="mono" key={`heap-${tick}`}>{formatNum(heapPct, 1)}%</strong>
+          <em>{formatBytes(heap?.usedBytes)} / {formatBytes(heap?.maxBytes)}</em>
+        </div>
+        <div className="health-mem__kpi">
+          <span>Non-heap</span>
+          <strong className="mono" key={`nh-${tick}`}>{formatNum(nonHeapPct, 1)}%</strong>
+          <em>{formatBytes(nonHeap?.usedBytes)} used</em>
+        </div>
+        <div className={`health-mem__kpi health-mem__kpi--${gcTone}`}>
+          <span>GC Δ (tick)</span>
+          <strong className="mono" key={`gcd-${tick}`}>{gcCountDelta}</strong>
+          <em>{gcTimeDelta} ms pause</em>
+        </div>
+        <div className="health-mem__kpi">
+          <span>GC lifetime</span>
+          <strong className="mono">{gc?.collectionCount ?? '—'}</strong>
+          <em>{gc?.collectionTimeMs ?? '—'} ms total</em>
+        </div>
+      </div>
+
+      <div className="health-mem__grid">
+        <article className={`health-mem__panel health-mem__panel--heap health-mem__panel--${heapTone}`}>
+          <header className="health-mem__panel-head">
+            <h4>Heap memory</h4>
+            <span className={`health-signal__trend health-signal__trend--${heapTrend}`}>
+              {heapTrend === 'up' ? '▲' : heapTrend === 'down' ? '▼' : '●'}
+            </span>
+          </header>
+          <div className="health-mem__panel-body">
+            <RingMeter
+              value={heapPct}
+              max={100}
+              color={heapTone === 'danger' ? '#c62828' : heapTone === 'warn' ? '#b45309' : '#0f766e'}
+              label="used"
+              display={`${formatNum(heapPct, 0)}%`}
+              size={108}
+            />
+            <div className="health-mem__panel-side">
+              <dl className="health-mem__stats">
+                <div>
+                  <dt>Used</dt>
+                  <dd className="mono">{formatBytes(heap?.usedBytes)}</dd>
+                </div>
+                <div>
+                  <dt>Committed</dt>
+                  <dd className="mono">{formatBytes(heap?.committedBytes)}</dd>
+                </div>
+                <div>
+                  <dt>Max</dt>
+                  <dd className="mono">{formatBytes(heap?.maxBytes)}</dd>
+                </div>
+              </dl>
+              <Sparkline
+                samples={samples}
+                getValue={(s) => s.heapUsedPercent}
+                color="#0f766e"
+                floorMax={100}
+                height={48}
+                live
+              />
+            </div>
+          </div>
+        </article>
+
+        <article className="health-mem__panel health-mem__panel--nonheap">
+          <header className="health-mem__panel-head">
+            <h4>Non-heap memory</h4>
+            <span className={`health-signal__trend health-signal__trend--${nonHeapTrend}`}>
+              {nonHeapTrend === 'up' ? '▲' : nonHeapTrend === 'down' ? '▼' : '●'}
+            </span>
+          </header>
+          <div className="health-mem__panel-body">
+            <RingMeter
+              value={nonHeapPct}
+              max={100}
+              color="#0891b2"
+              label="used"
+              display={`${formatNum(nonHeapPct, 0)}%`}
+              size={108}
+            />
+            <div className="health-mem__panel-side">
+              <dl className="health-mem__stats">
+                <div>
+                  <dt>Used</dt>
+                  <dd className="mono">{formatBytes(nonHeap?.usedBytes)}</dd>
+                </div>
+                <div>
+                  <dt>Committed</dt>
+                  <dd className="mono">{formatBytes(nonHeap?.committedBytes)}</dd>
+                </div>
+                <div>
+                  <dt>Max</dt>
+                  <dd className="mono">{formatBytes(nonHeap?.maxBytes)}</dd>
+                </div>
+              </dl>
+              <Sparkline
+                samples={samples}
+                getValue={(s) => s.nonHeapUsedPercent ?? 0}
+                color="#0891b2"
+                floorMax={100}
+                height={48}
+                live
+              />
+            </div>
+          </div>
+        </article>
+
+        <article className={`health-mem__panel health-mem__panel--gc health-mem__panel--${gcTone}`}>
+          <header className="health-mem__panel-head">
+            <h4>Garbage collection</h4>
+            <span className={`health-signal__trend health-signal__trend--${gcTimeTrend}`}>
+              {gcTimeTrend === 'up' ? '▲' : gcTimeTrend === 'down' ? '▼' : '●'}
+            </span>
+          </header>
+          <div className="health-mem__gc-summary">
+            <div>
+              <span>Collections (Δ)</span>
+              <strong className="mono">{gcCountDelta}</strong>
+            </div>
+            <div>
+              <span>Pause time (Δ)</span>
+              <strong className="mono">{gcTimeDelta} ms</strong>
+            </div>
+            <div>
+              <span>Total collections</span>
+              <strong className="mono">{gc?.collectionCount ?? '—'}</strong>
+            </div>
+            <div>
+              <span>Total pause</span>
+              <strong className="mono">{gc?.collectionTimeMs ?? '—'} ms</strong>
+            </div>
+          </div>
+          <div className="health-mem__gc-charts">
+            <Sparkline
+              samples={samples}
+              getValue={(s) => s.gcCollectionCountDelta ?? 0}
+              color="#7c3aed"
+              floorMax={1}
+              height={44}
+              live
+            />
+            <Sparkline
+              samples={samples}
+              getValue={(s) => s.gcCollectionTimeMsDelta ?? 0}
+              color="#b45309"
+              floorMax={50}
+              height={44}
+              live
+            />
+          </div>
+          {collectors.length ? (
+            <table className="health-mem__gc-table">
+              <thead>
+                <tr>
+                  <th>Collector</th>
+                  <th>Count</th>
+                  <th>Δ</th>
+                  <th>Time (ms)</th>
+                  <th>Δ (ms)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {collectors.map((collector) => (
+                  <tr key={collector.name}>
+                    <td className="mono">{collector.name}</td>
+                    <td className="mono">{collector.collectionCount}</td>
+                    <td className="mono">{collector.collectionCountDelta}</td>
+                    <td className="mono">{collector.collectionTimeMs}</td>
+                    <td className="mono">{collector.collectionTimeMsDelta}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="health-mem__empty">No per-collector GC metrics from this target yet.</p>
+          )}
+        </article>
+      </div>
+
+      <section className="health-mem__analysis" aria-labelledby="heap-analysis-heading">
+        <div className="health-mem__analysis-head">
+          <div>
+            <h3 id="heap-analysis-heading" className="health-stack__title">Heap analysis</h3>
+            <p className="health-metric__sub">
+              Retained memory by pool and shallow bytes per class (live GC histogram)
+              {heapAnalysis?.timestamp ? ` · ${formatRelative(heapAnalysis.timestamp)}` : ''}
+            </p>
+            {heapAnalysis?.histogramNote ? (
+              <p className="health-mem__analysis-note">{heapAnalysis.histogramNote}</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="btn health-btn"
+            onClick={loadHeapAnalysis}
+            disabled={analysisLoading || !application || !environment}
+          >
+            {analysisLoading ? 'Analyzing…' : 'Refresh analysis'}
+          </button>
+        </div>
+
+        {analysisError ? (
+          <p className="health-mem__analysis-error" role="alert">{analysisError}</p>
+        ) : null}
+
+        {analysisLoading && !heapAnalysis ? (
+          <p className="health-mem__empty">Running heap analysis…</p>
+        ) : null}
+
+        {heapAnalysis ? (
+          <>
+            <div className="health-mem__analysis-kpis">
+              <div className="health-mem__kpi">
+                <span>Pools</span>
+                <strong className="mono">{heapAnalysis.pools?.length ?? 0}</strong>
+              </div>
+              <div className="health-mem__kpi">
+                <span>Classes listed</span>
+                <strong className="mono">{heapAnalysis.classCount ?? 0}</strong>
+              </div>
+              <div className="health-mem__kpi">
+                <span>Shallow total (top)</span>
+                <strong className="mono">{formatBytes(heapAnalysis.totalShallowBytes)}</strong>
+              </div>
+              <div className="health-mem__kpi">
+                <span>Histogram</span>
+                <strong>{heapAnalysis.histogramAvailable ? 'Live' : 'Pools only'}</strong>
+              </div>
+            </div>
+
+            <article className="health-mem__analysis-panel">
+              <header className="health-mem__analysis-panel-head">
+                <h4>Memory pools (retained by region)</h4>
+              </header>
+              {heapAnalysis.pools?.length ? (
+                <table className="health-mem__analysis-table">
+                  <thead>
+                    <tr>
+                      <th>Pool</th>
+                      <th>Area</th>
+                      <th>Used</th>
+                      <th>Committed</th>
+                      <th>Max</th>
+                      <th>%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {heapAnalysis.pools.map((pool) => (
+                      <tr key={pool.id}>
+                        <td className="mono">{pool.id}</td>
+                        <td>{pool.area}</td>
+                        <td className="mono">{formatBytes(pool.usedBytes)}</td>
+                        <td className="mono">{formatBytes(pool.committedBytes)}</td>
+                        <td className="mono">{formatBytes(pool.maxBytes)}</td>
+                        <td className="mono">{formatNum(pool.usedPercent, 1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="health-mem__empty">No memory pool metrics from this target.</p>
+              )}
+            </article>
+
+            <article className="health-mem__analysis-panel">
+              <header className="health-mem__analysis-panel-head">
+                <h4>Objects by class (shallow used memory)</h4>
+                <div className="health-tx__sort-pills" role="group" aria-label="Sort classes">
+                  {[
+                    { id: 'bytes', label: 'Bytes' },
+                    { id: 'instances', label: 'Instances' },
+                    { id: 'name', label: 'Name' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      className={classSort === opt.id ? 'health-tx__pill health-tx__pill--on' : 'health-tx__pill'}
+                      onClick={() => setClassSort(/** @type {'bytes' | 'instances' | 'name'} */ (opt.id))}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </header>
+              {sortedClasses.length ? (
+                <table className="health-mem__analysis-table health-mem__analysis-table--classes">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Class</th>
+                      <th>Instances</th>
+                      <th>Shallow bytes</th>
+                      <th>% of listed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedClasses.map((row, index) => (
+                      <tr key={`${row.className}-${index}`}>
+                        <td className="mono">{row.rank ?? index + 1}</td>
+                        <td className="mono health-mem__class-name" title={row.className}>{row.className}</td>
+                        <td className="mono">{row.instanceCount}</td>
+                        <td className="mono">{formatBytes(row.shallowBytes)}</td>
+                        <td className="mono">{formatNum(row.percentOfTotal, 1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="health-mem__empty">
+                  {heapAnalysis.histogramNote
+                    || 'Per-class usage is not available yet. Click Refresh analysis while the target JVM is running on this machine.'}
+                </p>
+              )}
+            </article>
+          </>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+/**
  * Graphical live metrics command center.
  * @param {{
  *   snapshot: import('../services/healthService.js').ApmSnapshot | null,
@@ -1994,8 +2396,8 @@ function MetricsLiveBoard({
               </div>
               <Sparkline samples={samples} getValue={(s) => s.heapUsedPercent} color="#0f766e" height={40} live />
               <em>
-                Non-heap {formatBytes(snapshot?.nonHeap?.usedBytes)} · GC {snapshot?.gc?.collectionCount ?? '—'} (
-                {snapshot?.gc?.collectionTimeMs ?? '—'} ms)
+                Non-heap {formatBytes(snapshot?.nonHeap?.usedBytes)} · GC Δ {snapshot?.gc?.collectionCountDelta ?? 0} (
+                {snapshot?.gc?.collectionTimeMsDelta ?? 0} ms)
               </em>
             </div>
           </div>
@@ -2113,6 +2515,36 @@ function MetricsLiveBoard({
           </div>
         </article>
       </div>
+
+      {(snapshot?.database || snapshot?.serviceMap?.nodes?.length || snapshot?.externalServices?.length) ? (
+        <div className="health-ml__deps">
+          <article className="health-ml__dep">
+            <span>Database</span>
+            <strong className={`health-status ${statusClass(snapshot?.database?.status)}`}>
+              {snapshot?.database?.status || 'UNKNOWN'}
+            </strong>
+            <em>
+              {snapshot?.database?.product || 'pool'} · {snapshot?.database?.active ?? 0}/{snapshot?.database?.max || '—'}
+            </em>
+          </article>
+          <article className="health-ml__dep">
+            <span>Service map</span>
+            <strong className="mono">{snapshot?.serviceMap?.nodes?.length || 0}</strong>
+            <em>{snapshot?.serviceMap?.edges?.length || 0} connections</em>
+          </article>
+          <article className="health-ml__dep">
+            <span>External</span>
+            <strong className="mono">{snapshot?.externalServices?.length || 0}</strong>
+            <em>
+              {formatNum(
+                (snapshot?.externalServices || []).reduce((s, e) => s + (Number(e.errorRatePercent) || 0), 0)
+                  / Math.max(1, snapshot?.externalServices?.length || 1),
+                1,
+              )}% avg errors
+            </em>
+          </article>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2541,8 +2973,609 @@ function AlertsBoard({
   );
 }
 
+const DEP_KIND_COLORS = {
+  app: '#2563eb',
+  database: '#0f766e',
+  http: '#7c3aed',
+  mail: '#db2777',
+  cache: '#0891b2',
+  queue: '#b45309',
+  other: '#64748b',
+};
+
+function kindColor(kind) {
+  return DEP_KIND_COLORS[String(kind || '').toLowerCase()] || DEP_KIND_COLORS.other;
+}
+
+function kindLabel(kind) {
+  const k = String(kind || 'other').toLowerCase();
+  if (k === 'http') return 'HTTP';
+  if (k === 'database') return 'Database';
+  return k.charAt(0).toUpperCase() + k.slice(1);
+}
+
+function databaseHasSignal(database) {
+  if (!database) return false;
+  return Boolean(
+    (database.pools && database.pools.length)
+    || (database.queries && database.queries.length)
+    || (database.product && String(database.product).trim())
+    || (database.status && String(database.status).toUpperCase() !== 'UNKNOWN')
+  );
+}
+
+/**
+ * Hikari/JDBC pool health plus Spring Data repository timings.
+ * @param {{
+ *   snapshot: import('../services/healthService.js').ApmSnapshot | null,
+ *   samples?: any[],
+ *   live?: boolean,
+ *   tick?: number,
+ * }} props
+ */
+function DatabaseBoard({ snapshot, samples = [], live = false, tick = 0 }) {
+  const database = snapshot?.database;
+  const pools = database?.pools ?? [];
+  const queries = [...(database?.queries ?? [])].sort((a, b) => (b.count || 0) - (a.count || 0));
+  const usage = database?.max > 0 ? (database.active * 100) / database.max : 0;
+  const usageTone = usage >= 90 ? 'danger' : usage >= 70 ? 'warn' : 'ok';
+  const status = database?.status || 'UNKNOWN';
+  const hasSignal = databaseHasSignal(database);
+  const usageTrend = trendFromSamples(samples, (s) => s.dbUsagePercent ?? 0);
+
+  return (
+    <div className={`health-db${live ? ' health-db--live' : ''}`}>
+      <div className="health-mem__toolbar">
+        <div>
+          <h3 className="health-stack__title">Database</h3>
+          <p className="health-metric__sub">
+            Connection pools, health, and repository timings · {formatRelative(snapshot?.timestamp)}
+          </p>
+        </div>
+        <span className={live ? 'health-live health-live--on' : 'health-live health-live--off'}>
+          <span className="health-live__dot" aria-hidden="true" />
+          {live ? 'Streaming' : 'Waiting…'}
+        </span>
+      </div>
+
+      {!hasSignal ? (
+        <div className="health-empty">
+          <p>No database metrics on this target yet.</p>
+          <span>
+            Actuator Hikari/JDBC gauges and Spring Data repository timers appear here once the
+            service has a datasource. Drugstore local should show the MySQL pool.
+          </span>
+        </div>
+      ) : (
+        <>
+          <div className="health-mem__kpis">
+            <div className={`health-mem__kpi health-mem__kpi--${shellTone(status) === 'up' ? 'ok' : shellTone(status) === 'down' ? 'danger' : 'warn'}`}>
+              <span>Health</span>
+              <strong className={`health-status ${statusClass(status)}`}>{status}</strong>
+              <em>{database?.product || 'datasource'}</em>
+            </div>
+            <div className={`health-mem__kpi health-mem__kpi--${usageTone}`}>
+              <span>Pool used</span>
+              <strong className="mono" key={`dbu-${tick}`}>{formatNum(usage, 0)}%</strong>
+              <em>{database?.active ?? 0} / {database?.max || '—'} connections</em>
+            </div>
+            <div className="health-mem__kpi">
+              <span>Idle / pending</span>
+              <strong className="mono">{database?.idle ?? 0}</strong>
+              <em>{database?.pending ?? 0} waiting</em>
+            </div>
+            <div className="health-mem__kpi">
+              <span>Timeouts</span>
+              <strong className="mono">{database?.timeouts ?? 0}</strong>
+              <em>{queries.length} repository methods</em>
+            </div>
+          </div>
+
+          <div className="health-db__grid">
+            <article className={`health-mem__panel health-mem__panel--${usageTone}`}>
+              <header className="health-mem__panel-head">
+                <h4>Pool saturation</h4>
+                <span className={`health-signal__trend health-signal__trend--${usageTrend}`}>
+                  {usageTrend === 'up' ? '▲' : usageTrend === 'down' ? '▼' : '●'}
+                </span>
+              </header>
+              <div className="health-mem__panel-body">
+                <RingMeter
+                  value={usage}
+                  max={100}
+                  color={usageTone === 'danger' ? '#c62828' : usageTone === 'warn' ? '#b45309' : '#0f766e'}
+                  label="used"
+                  display={`${formatNum(usage, 0)}%`}
+                  size={108}
+                  flashKey={tick}
+                />
+                <div className="health-mem__panel-side">
+                  <dl className="health-mem__stats">
+                    <div>
+                      <dt>Active</dt>
+                      <dd className="mono">{database?.active ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt>Idle</dt>
+                      <dd className="mono">{database?.idle ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt>Max</dt>
+                      <dd className="mono">{database?.max || '—'}</dd>
+                    </div>
+                  </dl>
+                  <Sparkline
+                    samples={samples}
+                    getValue={(s) => s.dbUsagePercent ?? 0}
+                    color="#0f766e"
+                    floorMax={100}
+                    height={48}
+                    live
+                  />
+                </div>
+              </div>
+            </article>
+
+            <article className="health-mem__panel">
+              <header className="health-mem__panel-head">
+                <h4>Pools</h4>
+                <span>{pools.length || 0}</span>
+              </header>
+              {!pools.length ? (
+                <p className="health-metric__sub">Health reports a database, but no Hikari gauges yet.</p>
+              ) : (
+                <ul className="health-db__pools">
+                  {pools.map((pool) => {
+                    const pct = Number(pool.usagePercent) || 0;
+                    const tone = pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : 'ok';
+                    return (
+                      <li key={`${pool.vendor}-${pool.name}`} className={`health-db__pool health-db__pool--${tone}`}>
+                        <div className="health-db__pool-top">
+                          <strong className="mono">{pool.name}</strong>
+                          <span>{pool.vendor}</span>
+                        </div>
+                        <div className="health-bar" aria-hidden="true">
+                          <div className="health-bar__fill" style={{ width: `${Math.min(100, pct)}%` }} />
+                        </div>
+                        <div className="health-db__pool-stats">
+                          <span>{pool.active}/{pool.max} active</span>
+                          <span>{pool.idle} idle</span>
+                          <span>hold {formatNum(pool.usageAvgMs, 0)} ms</span>
+                          <span>acquire {formatNum(pool.acquireAvgMs, 0)} ms</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </article>
+          </div>
+
+          <section className="health-db__queries">
+            <header className="health-lat__rank-head">
+              <div>
+                <h4 className="health-stack__title">Repository calls</h4>
+                <p className="health-metric__sub">Spring Data method timings as a proxy for database work</p>
+              </div>
+            </header>
+            {!queries.length ? (
+              <div className="health-empty health-lat__empty">
+                <p>No repository invocation metrics yet</p>
+                <span>Call drugstore APIs that hit JPA repositories to populate this table.</span>
+              </div>
+            ) : (
+              <table className="health-mem__analysis-table">
+                <thead>
+                  <tr>
+                    <th>Repository</th>
+                    <th>Method</th>
+                    <th>Calls</th>
+                    <th>Errors</th>
+                    <th>Avg</th>
+                    <th>Max</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {queries.map((q) => (
+                    <tr key={`${q.repository}.${q.method}`}>
+                      <td className="mono">{q.repository}</td>
+                      <td className="mono">{q.method}</td>
+                      <td className="mono">{q.count}</td>
+                      <td className={Number(q.errorRatePercent) > 0 ? 'health-db__err' : 'mono'}>
+                        {formatNum(q.errorRatePercent, 1)}%
+                      </td>
+                      <td className="mono">{formatNum(q.avgMs, 1)} ms</td>
+                      <td className="mono">{formatNum(q.maxMs, 1)} ms</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Topology of the selected app and its observed dependencies.
+ * @param {{
+ *   snapshot: import('../services/healthService.js').ApmSnapshot | null,
+ *   live?: boolean,
+ *   tick?: number,
+ * }} props
+ */
+function ServiceMapBoard({ snapshot, live = false, tick = 0 }) {
+  const [focusId, setFocusId] = useState('');
+  const map = snapshot?.serviceMap;
+  const nodes = map?.nodes ?? [];
+  const edges = map?.edges ?? [];
+  const app = nodes.find((n) => n.kind === 'app') || nodes[0];
+  const databases = nodes.filter((n) => n.kind === 'database');
+  const others = nodes.filter((n) => n.kind !== 'app' && n.kind !== 'database');
+  const focused = nodes.find((n) => n.id === focusId) || app;
+  const focusedEdges = edges.filter((e) => e.from === focused?.id || e.to === focused?.id);
+
+  const layout = useMemo(() => {
+    const width = 720;
+    const height = 340;
+    const positions = {};
+    if (app) {
+      positions[app.id] = { x: width / 2, y: height / 2 };
+    }
+    databases.forEach((node, i) => {
+      const count = Math.max(1, databases.length);
+      positions[node.id] = {
+        x: 110,
+        y: count === 1 ? height / 2 : 70 + (i * (height - 140)) / Math.max(1, count - 1),
+      };
+    });
+    others.forEach((node, i) => {
+      const count = Math.max(1, others.length);
+      positions[node.id] = {
+        x: width - 110,
+        y: count === 1 ? height / 2 : 70 + (i * (height - 140)) / Math.max(1, count - 1),
+      };
+    });
+    return { width, height, positions };
+  }, [app, databases, others]);
+
+  if (!nodes.length) {
+    return (
+      <div className="health-map">
+        <div className="health-mem__toolbar">
+          <div>
+            <h3 className="health-stack__title">Service map</h3>
+            <p className="health-metric__sub">Application, databases, and outbound dependencies</p>
+          </div>
+        </div>
+        <div className="health-empty">
+          <p>No dependency topology yet.</p>
+          <span>The map fills from database pools, health indicators, and outbound HTTP clients.</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`health-map${live ? ' health-map--live' : ''}`}>
+      <div className="health-mem__toolbar">
+        <div>
+          <h3 className="health-stack__title">Service map</h3>
+          <p className="health-metric__sub">
+            {nodes.length} nodes · {edges.length} connections · {formatRelative(snapshot?.timestamp)}
+          </p>
+        </div>
+        <span className={live ? 'health-live health-live--on' : 'health-live health-live--off'}>
+          <span className="health-live__dot" aria-hidden="true" />
+          {live ? 'Streaming' : 'Waiting…'}
+        </span>
+      </div>
+
+      <div className="health-map__stage">
+        <svg
+          className="health-map__canvas"
+          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          role="img"
+          aria-label="Service dependency map"
+        >
+          {edges.map((edge) => {
+            const from = layout.positions[edge.from];
+            const to = layout.positions[edge.to];
+            if (!from || !to) return null;
+            const midX = (from.x + to.x) / 2;
+            const tone = String(edge.status || '').toUpperCase();
+            const stroke = tone === 'DOWN' ? '#c62828' : tone === 'DEGRADED' ? '#b45309' : '#94a3b8';
+            const on = focused && (edge.from === focused.id || edge.to === focused.id);
+            return (
+              <path
+                key={`${edge.from}-${edge.to}`}
+                d={`M ${from.x} ${from.y} C ${midX} ${from.y}, ${midX} ${to.y}, ${to.x} ${to.y}`}
+                fill="none"
+                stroke={stroke}
+                strokeWidth={on ? 3.2 : 1.8}
+                opacity={on ? 1 : 0.45}
+              />
+            );
+          })}
+          {nodes.map((node) => {
+            const pos = layout.positions[node.id];
+            if (!pos) return null;
+            const on = focused?.id === node.id;
+            const color = kindColor(node.kind);
+            return (
+              <g
+                key={node.id}
+                transform={`translate(${pos.x}, ${pos.y})`}
+                className={on ? 'health-map__node health-map__node--on' : 'health-map__node'}
+                onClick={() => setFocusId(node.id)}
+                style={{ cursor: 'pointer' }}
+              >
+                <circle r={on ? 28 : 24} fill="#fff" stroke={color} strokeWidth={on ? 4 : 2.5} />
+                <circle r="7" fill={color} />
+                <text y="42" textAnchor="middle" className="health-map__label">
+                  {node.name.length > 18 ? `${node.name.slice(0, 16)}…` : node.name}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+
+        {focused ? (
+          <article className="health-map__focus" key={`map-${focused.id}-${tick}`}>
+            <div className="health-map__focus-top">
+              <span className="health-map__kind" style={{ background: kindColor(focused.kind) }}>
+                {kindLabel(focused.kind)}
+              </span>
+              <div>
+                <h4>{focused.name}</h4>
+                <p className="health-metric__sub">{focused.detail || focused.kind}</p>
+              </div>
+              <span className={`health-status ${statusClass(focused.status)}`}>{focused.status}</span>
+            </div>
+            <dl className="health-map__focus-stats">
+              <div>
+                <dt>Calls</dt>
+                <dd className="mono">{focused.calls ?? 0}</dd>
+              </div>
+              <div>
+                <dt>Avg</dt>
+                <dd className="mono">{formatNum(focused.avgMs, 0)} ms</dd>
+              </div>
+              <div>
+                <dt>Errors</dt>
+                <dd className="mono">{formatNum(focused.errorRatePercent, 1)}%</dd>
+              </div>
+              <div>
+                <dt>Links</dt>
+                <dd className="mono">{focusedEdges.length}</dd>
+              </div>
+            </dl>
+          </article>
+        ) : null}
+      </div>
+
+      <ul className="health-map__legend">
+        {nodes.map((node) => (
+          <li key={`leg-${node.id}`}>
+            <button
+              type="button"
+              className={focused?.id === node.id ? 'health-map__chip health-map__chip--on' : 'health-map__chip'}
+              onClick={() => setFocusId(node.id)}
+            >
+              <i style={{ background: kindColor(node.kind) }} />
+              <span>{node.name}</span>
+              <strong className={statusClass(node.status)}>{node.status}</strong>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Outbound HTTP clients and other non-database health dependencies.
+ * @param {{
+ *   snapshot: import('../services/healthService.js').ApmSnapshot | null,
+ *   samples?: any[],
+ *   live?: boolean,
+ *   tick?: number,
+ * }} props
+ */
+function ExternalBoard({ snapshot, samples = [], live = false, tick = 0 }) {
+  const [sort, setSort] = useState(/** @type {'count' | 'errors' | 'latency'} */ ('count'));
+  const [focus, setFocus] = useState(0);
+  const externals = [...(snapshot?.externalServices ?? [])];
+  externals.sort((a, b) => {
+    if (sort === 'errors') return (b.errorRatePercent || 0) - (a.errorRatePercent || 0);
+    if (sort === 'latency') return (b.avgMs || 0) - (a.avgMs || 0);
+    return (b.count || 0) - (a.count || 0);
+  });
+  const total = externals.reduce((s, e) => s + (Number(e.count) || 0), 0);
+  const errors = externals.reduce((s, e) => s + (Number(e.errorCount) || 0), 0);
+  const errRate = total > 0 ? (errors * 100) / total : 0;
+  const avgMs = total > 0
+    ? externals.reduce((s, e) => s + (Number(e.count) || 0) * (Number(e.avgMs) || 0), 0) / total
+    : 0;
+  const focused = externals[Math.min(focus, Math.max(0, externals.length - 1))] || null;
+  const errTrend = trendFromSamples(samples, (s) => s.externalErrorRatePercent ?? 0);
+  const errTone = errRate >= 10 ? 'danger' : errRate > 0 ? 'warn' : 'ok';
+
+  return (
+    <div className={`health-ext${live ? ' health-ext--live' : ''}`}>
+      <div className="health-mem__toolbar">
+        <div>
+          <h3 className="health-stack__title">External services</h3>
+          <p className="health-metric__sub">
+            Outbound HTTP, mail, and other health dependencies · {formatRelative(snapshot?.timestamp)}
+          </p>
+        </div>
+        <div className="health-tx__sort-pills" role="group" aria-label="Sort external services">
+          <button
+            type="button"
+            className={sort === 'count' ? 'health-tx__pill health-tx__pill--on' : 'health-tx__pill'}
+            onClick={() => setSort('count')}
+          >
+            By calls
+          </button>
+          <button
+            type="button"
+            className={sort === 'errors' ? 'health-tx__pill health-tx__pill--on' : 'health-tx__pill'}
+            onClick={() => setSort('errors')}
+          >
+            By errors
+          </button>
+          <button
+            type="button"
+            className={sort === 'latency' ? 'health-tx__pill health-tx__pill--on' : 'health-tx__pill'}
+            onClick={() => setSort('latency')}
+          >
+            By latency
+          </button>
+        </div>
+      </div>
+
+      <div className="health-mem__kpis">
+        <div className="health-mem__kpi">
+          <span>Dependencies</span>
+          <strong className="mono" key={`ex-${tick}`}>{externals.length}</strong>
+          <em>{total} outbound calls</em>
+        </div>
+        <div className={`health-mem__kpi health-mem__kpi--${errTone}`}>
+          <span>Error rate</span>
+          <strong className="mono">{formatNum(errRate, 1)}%</strong>
+          <em>
+            {errors} errors
+            <span className={`health-signal__trend health-signal__trend--${errTrend}`}>
+              {errTrend === 'up' ? ' ▲' : errTrend === 'down' ? ' ▼' : ' ●'}
+            </span>
+          </em>
+        </div>
+        <div className="health-mem__kpi">
+          <span>Avg latency</span>
+          <strong className="mono">{formatNum(avgMs, 0)} ms</strong>
+          <em>across observed clients</em>
+        </div>
+        <div className="health-mem__kpi">
+          <span>Trend</span>
+          <Sparkline
+            samples={samples}
+            getValue={(s) => s.externalErrorRatePercent ?? 0}
+            color="#c62828"
+            floorMax={5}
+            height={36}
+            live
+          />
+          <em>external error %</em>
+        </div>
+      </div>
+
+      {!externals.length ? (
+        <div className="health-empty">
+          <p>No outbound clients observed yet.</p>
+          <span>
+            Instrumented RestClient/WebClient calls and non-database health indicators (mail, cache,
+            queues) appear here. This dashboard’s Actuator scrapes show up when you monitor the local JVM.
+          </span>
+        </div>
+      ) : (
+        <div className="health-ext__grid">
+          <ul className="health-lat__rank">
+            {externals.map((item, index) => {
+              const value = sort === 'errors'
+                ? Number(item.errorRatePercent) || 0
+                : sort === 'latency'
+                  ? Number(item.avgMs) || 0
+                  : Number(item.count) || 0;
+              const max = Math.max(
+                1,
+                ...externals.map((e) => (
+                  sort === 'errors' ? Number(e.errorRatePercent) || 0
+                    : sort === 'latency' ? Number(e.avgMs) || 0
+                      : Number(e.count) || 0
+                )),
+              );
+              return (
+                <li key={`${item.kind}-${item.name}-${item.uri}-${item.method}`}>
+                  <button
+                    type="button"
+                    className={
+                      focus === index
+                        ? 'health-lat__rank-row health-lat__rank-row--on'
+                        : 'health-lat__rank-row'
+                    }
+                    onMouseEnter={() => setFocus(index)}
+                    onClick={() => setFocus(index)}
+                  >
+                    <span className="health-lat__rank-idx mono">{index + 1}</span>
+                    <span className="health-lat__rank-body">
+                      <span className="health-lat__rank-top">
+                        <span className="mono">{item.name}</span>
+                        <strong className="mono">
+                          {sort === 'errors'
+                            ? `${formatNum(value, 1)}%`
+                            : sort === 'latency'
+                              ? `${formatNum(value, 0)} ms`
+                              : value}
+                        </strong>
+                      </span>
+                      <span className="health-lat__rank-track">
+                        <i style={{ width: `${Math.max(6, (value / max) * 100)}%`, background: kindColor(item.kind) }} />
+                      </span>
+                      <span className={`health-lat__zone-tag health-status ${statusClass(item.healthStatus)}`}>
+                        {item.healthStatus || 'UP'}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+
+          {focused ? (
+            <article className="health-lat__focus" style={{ '--focus-color': kindColor(focused.kind) }}>
+              <div className="health-lat__focus-top">
+                <span className="health-tx__method">{kindLabel(focused.kind)}</span>
+                <div>
+                  <h4>{focused.name}</h4>
+                  <p className="mono">{focused.target || focused.uri || focused.method || '—'}</p>
+                </div>
+              </div>
+              <div className="health-lat__focus-meters">
+                <div>
+                  <span>Calls</span>
+                  <strong className="mono">{focused.count}</strong>
+                </div>
+                <div>
+                  <span>Errors</span>
+                  <strong className="mono">{formatNum(focused.errorRatePercent, 1)}%</strong>
+                </div>
+                <div>
+                  <span>Avg</span>
+                  <strong className="mono">{formatNum(focused.avgMs, 1)} ms</strong>
+                </div>
+                <div>
+                  <span>Max</span>
+                  <strong className="mono">{formatNum(focused.maxMs, 1)} ms</strong>
+                </div>
+              </div>
+            </article>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * @param {Object} props
+ * @param {import('../services/healthService.js').HealthTargetsCatalog | null} [props.catalog]
+ * @param {string} [props.application]
+ * @param {string} [props.environment]
+ * @param {function(string): void} [props.onSelectApplication]
+ * @param {function(string): void} [props.onSelectEnvironment]
  * @param {import('../services/healthService.js').ApmSnapshot | null} props.snapshot
  * @param {import('../services/healthService.js').ApmAlertEvent[]} [props.alerts]
  * @param {import('../services/healthService.js').ApmAlertEvent[]} [props.activeAlerts]
@@ -2565,6 +3598,11 @@ function AlertsBoard({
  * @param {function(): void} [props.onDismissToast]
  */
 export function HealthCheckPanel({
+  catalog = null,
+  application = '',
+  environment = '',
+  onSelectApplication,
+  onSelectEnvironment,
   snapshot,
   alerts: alertsProp,
   activeAlerts = [],
@@ -2600,6 +3638,15 @@ export function HealthCheckPanel({
   const transactions = snapshot?.transactions ?? [];
   const alerts = alertsProp ?? snapshot?.alerts ?? [];
   const tone = shellTone(status);
+  const appId = useId();
+  const envId = useId();
+  const applications = catalog?.applications ?? [];
+  const selectedApp = applications.find((item) => item.id === application) ?? applications[0] ?? null;
+  const environments = selectedApp?.environments ?? [];
+  const selectedEnv = environments.find((item) => item.id === environment) ?? environments[0] ?? null;
+  const displayName = snapshot?.applicationName || selectedApp?.name || snapshot?.serviceName || '—';
+  const displayEnv = snapshot?.environmentLabel || selectedEnv?.label || snapshot?.environment || environment || '';
+  const targetUrl = snapshot?.targetUrl || selectedEnv?.url || '';
 
   const sortedTransactions = useMemo(() => {
     const list = transactions.filter((tx) => {
@@ -2669,16 +3716,59 @@ export function HealthCheckPanel({
           <h2 id="health-check-heading" className="health-hero__title">
             {SECTION.HEALTH.title}
           </h2>
+          <div className="health-target-picker">
+            <label className="health-target-picker__field" htmlFor={appId}>
+              <span>Application</span>
+              <select
+                id={appId}
+                className="health-target-picker__select"
+                value={selectedApp?.id ?? ''}
+                disabled={!applications.length || !onSelectApplication}
+                onChange={(event) => onSelectApplication?.(event.target.value)}
+              >
+                {applications.length ? (
+                  applications.map((app) => (
+                    <option key={app.id} value={app.id}>
+                      {app.name}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">Loading…</option>
+                )}
+              </select>
+            </label>
+            <label className="health-target-picker__field" htmlFor={envId}>
+              <span>Environment</span>
+              <select
+                id={envId}
+                className="health-target-picker__select"
+                value={selectedEnv?.id ?? ''}
+                disabled={!environments.length || !onSelectEnvironment}
+                onChange={(event) => onSelectEnvironment?.(event.target.value)}
+              >
+                {environments.length ? (
+                  environments.map((env) => (
+                    <option key={env.id} value={env.id}>
+                      {env.label}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">—</option>
+                )}
+              </select>
+            </label>
+          </div>
           <p className="health-hero__service">
-            <span className="health-hero__service-name">{snapshot?.serviceName ?? '—'}</span>
-            {snapshot?.targetUrl && snapshot.targetUrl !== 'local' ? (
-              <span className="health-hero__target mono">{snapshot.targetUrl}</span>
+            <span className="health-hero__service-name">{displayName}</span>
+            {displayEnv ? <span className="health-hero__env">{displayEnv}</span> : null}
+            {targetUrl && targetUrl !== 'local' ? (
+              <span className="health-hero__target mono">{targetUrl}</span>
             ) : (
               <span className="health-hero__target">Local JVM</span>
             )}
           </p>
           <p className="health-hero__hint">
-            Live throughput, errors, latency, and Apdex for your Actuator target — updates about every second.
+            {SECTION.HEALTH.loadHint}
           </p>
         </div>
 
@@ -2757,7 +3847,22 @@ export function HealthCheckPanel({
               {item.id === 'alerts' && (activeAlertCount || alerts.length) ? (
                 <span className="health-apm-tab__count">{activeAlertCount || alerts.length}</span>
               ) : null}
+              {item.id === 'database' && snapshot?.database?.pools?.length ? (
+                <span className="health-apm-tab__count">{snapshot.database.pools.length}</span>
+              ) : null}
+              {item.id === 'map' && snapshot?.serviceMap?.nodes?.length ? (
+                <span className="health-apm-tab__count">{snapshot.serviceMap.nodes.length}</span>
+              ) : null}
+              {item.id === 'external' && snapshot?.externalServices?.length ? (
+                <span className="health-apm-tab__count">{snapshot.externalServices.length}</span>
+              ) : null}
               {item.id === 'overview' && metricsLive ? (
+                <span className="health-apm-tab__live">live</span>
+              ) : null}
+              {item.id === 'memory' && metricsLive ? (
+                <span className="health-apm-tab__live">live</span>
+              ) : null}
+              {(item.id === 'database' || item.id === 'map' || item.id === 'external') && metricsLive ? (
                 <span className="health-apm-tab__live">live</span>
               ) : null}
             </button>
@@ -2776,6 +3881,17 @@ export function HealthCheckPanel({
             metricsLive={metricsLive}
             alertsLive={alertsLive}
             paused={paused}
+            tick={metricsTick}
+          />
+        ) : null}
+
+        {tab === 'memory' ? (
+          <MemoryGcBoard
+            snapshot={snapshot}
+            samples={samples}
+            application={application}
+            environment={environment}
+            live={isStreaming}
             tick={metricsTick}
           />
         ) : null}
@@ -2802,6 +3918,32 @@ export function HealthCheckPanel({
           <ErrorsBoard
             snapshot={snapshot}
             transactions={sortedTransactions}
+            samples={samples}
+            live={isStreaming}
+            tick={metricsTick}
+          />
+        ) : null}
+
+        {tab === 'database' ? (
+          <DatabaseBoard
+            snapshot={snapshot}
+            samples={samples}
+            live={isStreaming}
+            tick={metricsTick}
+          />
+        ) : null}
+
+        {tab === 'map' ? (
+          <ServiceMapBoard
+            snapshot={snapshot}
+            live={isStreaming}
+            tick={metricsTick}
+          />
+        ) : null}
+
+        {tab === 'external' ? (
+          <ExternalBoard
+            snapshot={snapshot}
             samples={samples}
             live={isStreaming}
             tick={metricsTick}

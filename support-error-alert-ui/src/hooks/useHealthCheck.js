@@ -4,6 +4,8 @@ import * as healthService from '../services/healthService.js';
 const POLL_INTERVAL_MS = 3000;
 const TOAST_TTL_MS = 8000;
 const ALERTS_RECONNECT_MS = 1500;
+const STORAGE_APP = 'support.health.application';
+const STORAGE_ENV = 'support.health.env';
 
 function formatError(e) {
   return e instanceof Error ? e.message : String(e);
@@ -11,6 +13,54 @@ function formatError(e) {
 
 function alertKey(alert) {
   return `${alert?.code ?? ''}|${alert?.timestamp ?? ''}|${alert?.message ?? ''}`;
+}
+
+function readStored(key) {
+  try {
+    return localStorage.getItem(key) || '';
+  } catch {
+    return '';
+  }
+}
+
+function writeStored(key, value) {
+  try {
+    if (value) localStorage.setItem(key, value);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+/**
+ * @param {import('../services/healthService.js').HealthTargetsCatalog | null} catalog
+ * @param {string} preferredApp
+ * @param {string} preferredEnv
+ */
+function pickSelection(catalog, preferredApp, preferredEnv) {
+  const apps = catalog?.applications ?? [];
+  if (!apps.length) {
+    return { application: '', environment: '' };
+  }
+  const app =
+    apps.find((item) => item.id === preferredApp)
+    || apps.find((item) => item.id === catalog.defaultApplication)
+    || apps[0];
+  const envs = app.environments ?? [];
+  const env =
+    envs.find((item) => item.id === preferredEnv)
+    || envs.find((item) => item.id === catalog.defaultEnvironment)
+    || envs[0];
+  return {
+    application: app.id,
+    environment: env?.id ?? '',
+  };
+}
+
+function matchesTarget(data, application, environment) {
+  if (!data) return false;
+  if (data.applicationId && application && data.applicationId !== application) return false;
+  if (data.environment && environment && data.environment !== environment) return false;
+  return true;
 }
 
 /** Active conditions derived from a snapshot when the alerts stream is late/idle. */
@@ -24,6 +74,14 @@ function countActiveFromSnapshot(snapshot) {
   if (Number(snapshot.heap?.usedPercent) >= 85) count += 1;
   if (Number(snapshot.requests?.errorRatePercent) >= 5) count += 1;
   if (snapshot.apdex != null && Number(snapshot.apdex.score) < 0.7) count += 1;
+  if (String(snapshot.database?.status || '').toUpperCase() === 'DOWN') count += 1;
+  const dbMax = Number(snapshot.database?.max) || 0;
+  const dbActive = Number(snapshot.database?.active) || 0;
+  if (dbMax > 0 && (dbActive * 100) / dbMax >= 90) count += 1;
+  const externals = snapshot.externalServices ?? [];
+  const extCount = externals.reduce((s, e) => s + (Number(e.count) || 0), 0);
+  const extErrors = externals.reduce((s, e) => s + (Number(e.errorCount) || 0), 0);
+  if (extCount > 0 && (extErrors * 100) / extCount >= 10) count += 1;
   return count;
 }
 
@@ -32,6 +90,10 @@ function countActiveFromSnapshot(snapshot) {
  * @param {{ enabled?: boolean }} [options]
  */
 export function useHealthCheck({ enabled = true } = {}) {
+  /** @type {[import('../services/healthService.js').HealthTargetsCatalog | null, import('react').Dispatch<any>]} */
+  const [catalog, setCatalog] = useState(null);
+  const [application, setApplication] = useState('');
+  const [environment, setEnvironment] = useState('');
   /** @type {[import('../services/healthService.js').ApmSnapshot | null, import('react').Dispatch<any>]} */
   const [snapshot, setSnapshot] = useState(null);
   /** @type {[import('../services/healthService.js').ApmMetricsView | null, import('react').Dispatch<any>]} */
@@ -59,6 +121,8 @@ export function useHealthCheck({ enabled = true } = {}) {
   const sseFailCount = useRef(0);
   const seenAlertKeys = useRef(new Set());
   const toastTimer = useRef(/** @type {ReturnType<typeof setTimeout> | null} */ (null));
+  const applicationRef = useRef(application);
+  const environmentRef = useRef(environment);
 
   useEffect(() => {
     mounted.current = true;
@@ -71,6 +135,66 @@ export function useHealthCheck({ enabled = true } = {}) {
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
+
+  useEffect(() => {
+    applicationRef.current = application;
+    environmentRef.current = environment;
+  }, [application, environment]);
+
+  const resetLiveState = useCallback(() => {
+    setSnapshot(null);
+    setMetrics(null);
+    setAlerts([]);
+    setActiveAlerts([]);
+    setActiveAlertCount(0);
+    setAlertToast(null);
+    setFullStacks([]);
+    setMetricsTick(0);
+    seenAlertKeys.current = new Set();
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let cancelled = false;
+    healthService.fetchHealthTargets()
+      .then((data) => {
+        if (cancelled || !mounted.current) return;
+        setCatalog(data);
+        const next = pickSelection(data, readStored(STORAGE_APP), readStored(STORAGE_ENV));
+        setApplication(next.application);
+        setEnvironment(next.environment);
+        writeStored(STORAGE_APP, next.application);
+        writeStored(STORAGE_ENV, next.environment);
+      })
+      .catch((e) => {
+        if (cancelled || !mounted.current) return;
+        setError(formatError(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
+
+  const selectApplication = useCallback((appId) => {
+    const nextApp = String(appId || '');
+    setApplication(nextApp);
+    writeStored(STORAGE_APP, nextApp);
+    const app = catalog?.applications?.find((item) => item.id === nextApp);
+    const envs = app?.environments ?? [];
+    setEnvironment((prev) => {
+      const nextEnv = envs.some((item) => item.id === prev) ? prev : (envs[0]?.id ?? '');
+      writeStored(STORAGE_ENV, nextEnv);
+      return nextEnv;
+    });
+    resetLiveState();
+  }, [catalog, resetLiveState]);
+
+  const selectEnvironment = useCallback((envId) => {
+    const nextEnv = String(envId || '');
+    setEnvironment(nextEnv);
+    writeStored(STORAGE_ENV, nextEnv);
+    resetLiveState();
+  }, [resetLiveState]);
 
   const pushToast = useCallback((/** @type {import('../services/healthService.js').ApmAlertEvent} */ alert) => {
     if (!mounted.current || pausedRef.current) return;
@@ -88,6 +212,7 @@ export function useHealthCheck({ enabled = true } = {}) {
 
   const applySnapshot = useCallback((/** @type {import('../services/healthService.js').ApmSnapshot} */ data) => {
     if (!mounted.current || pausedRef.current) return;
+    if (!matchesTarget(data, applicationRef.current, environmentRef.current)) return;
     setSnapshot(data);
     if (Array.isArray(data.alerts)) setAlerts(data.alerts);
     syncActiveFromSnapshot(data);
@@ -97,6 +222,7 @@ export function useHealthCheck({ enabled = true } = {}) {
 
   const applyMetrics = useCallback((/** @type {import('../services/healthService.js').ApmMetricsView} */ data) => {
     if (!mounted.current || pausedRef.current) return;
+    if (!matchesTarget(data, applicationRef.current, environmentRef.current)) return;
     setMetrics(data);
     setMetricsTick((n) => n + 1);
     setSnapshot((prev) => {
@@ -104,11 +230,20 @@ export function useHealthCheck({ enabled = true } = {}) {
         ? {
             ...data,
             nonHeap: { usedBytes: 0, committedBytes: 0, maxBytes: 0, usedPercent: 0 },
-            gc: { collectionCount: 0, collectionTimeMs: 0 },
+            gc: {
+              collectionCount: 0,
+              collectionTimeMs: 0,
+              collectionCountDelta: 0,
+              collectionTimeMsDelta: 0,
+              collectors: [],
+            },
             health: { status: data.status, components: {} },
             probes: { liveness: 'UNKNOWN', readiness: 'UNKNOWN' },
             alerts: [],
             topStacks: [],
+            database: data.database ?? { status: 'UNKNOWN', product: '', pools: [], queries: [], active: 0, idle: 0, pending: 0, max: 0, timeouts: 0 },
+            externalServices: data.externalServices ?? [],
+            serviceMap: data.serviceMap ?? { nodes: [], edges: [] },
           }
         : {
             ...prev,
@@ -117,15 +252,24 @@ export function useHealthCheck({ enabled = true } = {}) {
             serviceName: data.serviceName ?? prev.serviceName,
             targetUrl: data.targetUrl ?? prev.targetUrl,
             source: data.source ?? prev.source,
+            applicationId: data.applicationId ?? prev.applicationId,
+            applicationName: data.applicationName ?? prev.applicationName,
+            environment: data.environment ?? prev.environment,
+            environmentLabel: data.environmentLabel ?? prev.environmentLabel,
             uptimeMs: data.uptimeMs ?? prev.uptimeMs,
             load: data.load ?? prev.load,
             heap: data.heap ?? prev.heap,
+            nonHeap: data.nonHeap ?? prev.nonHeap,
+            gc: data.gc ?? prev.gc,
             threads: data.threads ?? prev.threads,
             requests: data.requests ?? prev.requests,
             latency: data.latency ?? prev.latency,
             apdex: data.apdex ?? prev.apdex,
             transactions: data.transactions ?? prev.transactions,
             recentSamples: data.recentSamples ?? prev.recentSamples,
+            database: data.database ?? prev.database,
+            externalServices: data.externalServices ?? prev.externalServices,
+            serviceMap: data.serviceMap ?? prev.serviceMap,
           };
       syncActiveFromSnapshot(next);
       return next;
@@ -134,6 +278,7 @@ export function useHealthCheck({ enabled = true } = {}) {
 
   const applyAlertsView = useCallback((/** @type {import('../services/healthService.js').ApmAlertsView} */ data) => {
     if (!mounted.current || pausedRef.current) return;
+    if (!matchesTarget(data, applicationRef.current, environmentRef.current)) return;
     if (Array.isArray(data.alerts)) setAlerts(data.alerts);
     if (Array.isArray(data.active)) setActiveAlerts(data.active);
     const count = Number(data.activeCount);
@@ -162,14 +307,18 @@ export function useHealthCheck({ enabled = true } = {}) {
   }, [pushToast]);
 
   const refresh = useCallback(async () => {
+    const appId = applicationRef.current;
+    const envId = environmentRef.current;
+    if (!appId || !envId) return;
     setLoading(true);
     try {
       const [snap, metricsView, alertsView] = await Promise.all([
-        healthService.fetchApmSnapshot(),
-        healthService.fetchApmMetrics().catch(() => null),
-        healthService.fetchApmAlerts().catch(() => null),
+        healthService.fetchApmSnapshot(appId, envId),
+        healthService.fetchApmMetrics(appId, envId).catch(() => null),
+        healthService.fetchApmAlerts(appId, envId).catch(() => null),
       ]);
       if (!mounted.current) return;
+      if (appId !== applicationRef.current || envId !== environmentRef.current) return;
       setSnapshot(snap);
       if (metricsView) setMetrics(metricsView);
       if (alertsView) {
@@ -193,10 +342,13 @@ export function useHealthCheck({ enabled = true } = {}) {
   }, []);
 
   const refreshStack = useCallback(async () => {
+    const appId = applicationRef.current;
+    const envId = environmentRef.current;
+    if (!appId || !envId) return;
     setStackLoading(true);
     try {
-      const data = await healthService.fetchApmStack();
-      if (mounted.current) {
+      const data = await healthService.fetchApmStack(appId, envId);
+      if (mounted.current && appId === applicationRef.current && envId === environmentRef.current) {
         setFullStacks(Array.isArray(data.threads) ? data.threads : []);
       }
     } catch (e) {
@@ -213,7 +365,7 @@ export function useHealthCheck({ enabled = true } = {}) {
   const dismissToast = useCallback(() => setAlertToast(null), []);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || !application || !environment) {
       setLive(false);
       setMetricsLive(false);
       setAlertsLive(false);
@@ -230,6 +382,8 @@ export function useHealthCheck({ enabled = true } = {}) {
     let alertsRetryTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null);
     let usingPoll = false;
     let stopped = false;
+    const appId = application;
+    const envId = environment;
 
     const startPolling = () => {
       if (usingPoll || stopped) return;
@@ -251,6 +405,8 @@ export function useHealthCheck({ enabled = true } = {}) {
         closeAlerts = null;
       }
       closeAlerts = healthService.subscribeAlertsStream({
+        application: appId,
+        env: envId,
         onAlerts: (data) => {
           setAlertsLive(true);
           applyAlertsView(data);
@@ -273,6 +429,8 @@ export function useHealthCheck({ enabled = true } = {}) {
       setMode('sse');
 
       closeApm = healthService.subscribeApmStream({
+        application: appId,
+        env: envId,
         onApm: (data) => {
           sseFailCount.current = 0;
           setLive(true);
@@ -295,6 +453,8 @@ export function useHealthCheck({ enabled = true } = {}) {
       });
 
       closeMetrics = healthService.subscribeMetricsStream({
+        application: appId,
+        env: envId,
         onMetrics: (data) => {
           setMetricsLive(true);
           applyMetrics(data);
@@ -305,7 +465,6 @@ export function useHealthCheck({ enabled = true } = {}) {
       startAlertsStream();
     };
 
-    // Immediate REST hydrate so Active alerts is correct before SSE events arrive.
     refresh().finally(() => {
       if (!stopped) startStreams();
     });
@@ -323,11 +482,16 @@ export function useHealthCheck({ enabled = true } = {}) {
       setAlertsLive(false);
       setMode('idle');
     };
-  }, [enabled, applySnapshot, applyMetrics, applyAlertsView, onAlertPush, refresh]);
+  }, [enabled, application, environment, applySnapshot, applyMetrics, applyAlertsView, onAlertPush, refresh]);
 
   const dismissError = useCallback(() => setError(null), []);
 
   return {
+    catalog,
+    application,
+    environment,
+    selectApplication,
+    selectEnvironment,
     snapshot,
     metrics,
     alerts,
