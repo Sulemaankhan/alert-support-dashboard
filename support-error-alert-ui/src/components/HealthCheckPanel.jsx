@@ -6,6 +6,7 @@ import './AlertSourcePanel.css';
 import './HealthCheckPanel.css';
 
 const APM_TABS = [
+  { id: 'services', label: 'Services' },
   { id: 'overview', label: 'Overview' },
   { id: 'memory', label: 'Memory' },
   { id: 'transactions', label: 'Transactions' },
@@ -3570,6 +3571,154 @@ function ExternalBoard({ snapshot, samples = [], live = false, tick = 0 }) {
 }
 
 /**
+ * Fleet health for every configured application (Drugstore, Error Alert, and any added later).
+ * @param {{
+ *   environment?: string,
+ *   selectedApplication?: string,
+ *   live?: boolean,
+ *   onOpenService?: (applicationId: string, environmentId: string) => void,
+ * }} props
+ */
+function ServicesBoard({ environment = '', selectedApplication = '', live = false, onOpenService }) {
+  const [board, setBoard] = useState(/** @type {import('../services/healthService.js').ServiceHealthBoard | null} */ (null));
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(/** @type {string | null} */ (null));
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await healthService.fetchServiceHealth(environment);
+      setBoard(data);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [environment]);
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 4000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  const services = board?.services ?? [];
+  const up = board?.upCount ?? 0;
+  const degraded = board?.degradedCount ?? 0;
+  const down = board?.downCount ?? 0;
+
+  return (
+    <div className={`health-svc${live ? ' health-svc--live' : ''}`}>
+      <div className="health-mem__toolbar">
+        <div>
+          <h3 className="health-stack__title">Services</h3>
+          <p className="health-metric__sub">
+            Health status for every configured application · adds automatically when you register n+1
+            {board?.timestamp ? ` · ${formatRelative(board.timestamp)}` : ''}
+          </p>
+        </div>
+        <span className={live ? 'health-live health-live--on' : 'health-live health-live--off'}>
+          <span className="health-live__dot" aria-hidden="true" />
+          {loading && !board ? 'Loading…' : live ? 'Streaming' : 'Polling'}
+        </span>
+      </div>
+
+      {error ? <p className="health-mem__analysis-error" role="alert">{error}</p> : null}
+
+      <div className="health-mem__kpis">
+        <div className="health-mem__kpi">
+          <span>Services</span>
+          <strong className="mono">{board?.serviceCount ?? services.length}</strong>
+          <em>configured applications</em>
+        </div>
+        <div className="health-mem__kpi health-mem__kpi--ok">
+          <span>Up</span>
+          <strong className="mono">{up}</strong>
+          <em>healthy</em>
+        </div>
+        <div className={`health-mem__kpi${degraded ? ' health-mem__kpi--warn' : ''}`}>
+          <span>Degraded</span>
+          <strong className="mono">{degraded}</strong>
+          <em>needs attention</em>
+        </div>
+        <div className={`health-mem__kpi${down ? ' health-mem__kpi--danger' : ''}`}>
+          <span>Down</span>
+          <strong className="mono">{down}</strong>
+          <em>unreachable or failed</em>
+        </div>
+      </div>
+
+      {!services.length && !loading ? (
+        <div className="health-empty">
+          <p>No applications configured.</p>
+          <span>Add entries under support.healthcheck.applications to show them here.</span>
+        </div>
+      ) : (
+        <ul className="health-svc__grid">
+          {services.map((svc) => {
+            const tone = shellTone(svc.status);
+            const selected = svc.applicationId === selectedApplication;
+            return (
+              <li key={svc.applicationId}>
+                <button
+                  type="button"
+                  className={`health-svc__card health-svc__card--${tone}${selected ? ' health-svc__card--on' : ''}`}
+                  onClick={() => onOpenService?.(svc.applicationId, svc.environment)}
+                >
+                  <div className="health-svc__card-top">
+                    <h4>{svc.applicationName || svc.serviceName}</h4>
+                    <span className={`health-status ${statusClass(svc.status)}`}>{svc.status}</span>
+                  </div>
+                  <p className="health-svc__meta">
+                    <span className="health-hero__env">{svc.environmentLabel || svc.environment}</span>
+                    <span className="mono">{svc.source === 'local' ? 'Local JVM' : (svc.targetUrl || 'remote')}</span>
+                  </p>
+                  <dl className="health-svc__stats">
+                    <div>
+                      <dt>Apdex</dt>
+                      <dd className={`mono ${apdexClass(svc.apdex)}`}>{formatNum(svc.apdex, 2)}</dd>
+                    </div>
+                    <div>
+                      <dt>Throughput</dt>
+                      <dd className="mono">{formatNum(svc.requestsPerMinute, 1)} rpm</dd>
+                    </div>
+                    <div>
+                      <dt>Errors</dt>
+                      <dd className="mono">{formatNum(svc.errorRatePercent, 1)}%</dd>
+                    </div>
+                    <div>
+                      <dt>Heap</dt>
+                      <dd className="mono">{formatNum(svc.heapUsedPercent, 1)}%</dd>
+                    </div>
+                    <div>
+                      <dt>Latency</dt>
+                      <dd className="mono">{formatNum(svc.avgLatencyMs, 0)} ms</dd>
+                    </div>
+                    <div>
+                      <dt>Uptime</dt>
+                      <dd className="mono">{formatUptime(svc.uptimeMs)}</dd>
+                    </div>
+                  </dl>
+                  <div className="health-svc__probes">
+                    <ProbeBadge label="Live" status={svc.liveness} />
+                    <ProbeBadge label="Ready" status={svc.readiness} />
+                    <ProbeBadge label="DB" status={svc.databaseStatus} />
+                  </div>
+                  {svc.environmentCount > 1 ? (
+                    <em className="health-svc__envs">{svc.environmentCount} environments configured</em>
+                  ) : null}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
  * @param {Object} props
  * @param {import('../services/healthService.js').HealthTargetsCatalog | null} [props.catalog]
  * @param {string} [props.application]
@@ -3844,6 +3993,9 @@ export function HealthCheckPanel({
               onClick={() => setTab(item.id)}
             >
               <span className="health-apm-tab__label">{item.label}</span>
+              {item.id === 'services' ? (
+                <span className="health-apm-tab__count">{catalog?.applications?.length || 0}</span>
+              ) : null}
               {item.id === 'alerts' && (activeAlertCount || alerts.length) ? (
                 <span className="health-apm-tab__count">{activeAlertCount || alerts.length}</span>
               ) : null}
@@ -3856,7 +4008,7 @@ export function HealthCheckPanel({
               {item.id === 'external' && snapshot?.externalServices?.length ? (
                 <span className="health-apm-tab__count">{snapshot.externalServices.length}</span>
               ) : null}
-              {item.id === 'overview' && metricsLive ? (
+              {(item.id === 'overview' || item.id === 'services') && metricsLive ? (
                 <span className="health-apm-tab__live">live</span>
               ) : null}
               {item.id === 'memory' && metricsLive ? (
@@ -3871,6 +4023,19 @@ export function HealthCheckPanel({
       </nav>
 
       <div key={tab} className="health-tab-stage">
+        {tab === 'services' ? (
+          <ServicesBoard
+            environment={environment}
+            selectedApplication={application}
+            live={isStreaming}
+            onOpenService={(appId, envId) => {
+              onSelectApplication?.(appId);
+              if (envId) onSelectEnvironment?.(envId);
+              setTab('overview');
+            }}
+          />
+        ) : null}
+
         {tab === 'overview' ? (
           <MetricsLiveBoard
             snapshot={snapshot}
