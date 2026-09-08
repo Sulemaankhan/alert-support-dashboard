@@ -34,7 +34,7 @@ export function AuthProvider({ children }) {
   const [googleClientId, setGoogleClientId] = useState('');
   const [devSignInCode, setDevSignInCode] = useState(/** @type {string | null} */ (null));
   const [emailOtpConfigured, setEmailOtpConfigured] = useState(false);
-  const [googleSsoOnly, setGoogleSsoOnly] = useState(true);
+  const [googleSignInOnly, setGoogleSignInOnly] = useState(true);
   const [jsonAlertsWithoutSignIn, setJsonAlertsWithoutSignIn] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(true);
   const [guestMode, setGuestMode] = useState(() => readGuestMode());
@@ -64,7 +64,7 @@ export function AuthProvider({ children }) {
         setGoogleClientId(typeof config.googleClientId === 'string' ? config.googleClientId : '');
         setDevSignInCode(typeof config.devSignInCode === 'string' ? config.devSignInCode : null);
         setEmailOtpConfigured(Boolean(config.emailOtpConfigured));
-        setGoogleSsoOnly(config.googleSsoOnly !== false);
+        setGoogleSignInOnly(config.googleSignInOnly !== false);
         setJsonAlertsWithoutSignIn(config.jsonAlertsWithoutSignIn !== false);
         if (config.jsonAlertsWithoutSignIn === false) {
           writeGuestMode(false);
@@ -145,7 +145,7 @@ export function AuthProvider({ children }) {
       googleClientId,
       devSignInCode,
       emailOtpConfigured,
-      googleSsoOnly,
+      googleSignInOnly,
       jsonAlertsWithoutSignIn,
       isGuest,
       enterGuestMode,
@@ -164,7 +164,7 @@ export function AuthProvider({ children }) {
       googleClientId,
       devSignInCode,
       emailOtpConfigured,
-      googleSsoOnly,
+      googleSignInOnly,
       jsonAlertsWithoutSignIn,
       isGuest,
       enterGuestMode,

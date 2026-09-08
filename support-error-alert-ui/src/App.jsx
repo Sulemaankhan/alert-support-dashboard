@@ -5,7 +5,7 @@ import './styles/buttons.css';
 import './App.css';
 
 export default function App() {
-  const { user, loading, isGuest } = useAuth();
+  const { user, loading, isGuest, authEnabled } = useAuth();
 
   if (loading) {
     return (
@@ -15,9 +15,9 @@ export default function App() {
     );
   }
 
-  if (!user && !isGuest) {
+  if (authEnabled && !user && !isGuest) {
     return <LoginPage />;
   }
 
-  return <Dashboard guestMode={isGuest} />;
+  return <Dashboard guestMode={Boolean(authEnabled && isGuest)} />;
 }

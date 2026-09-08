@@ -17,10 +17,6 @@ export const SECTION = {
       'Choose a JSON file from your monitoring export. Only the first error in the file becomes the JSON alert.',
     emptyDetail: 'No JSON alert loaded yet. Upload a JSON file above.',
   },
-  EMAIL: {
-    title: 'Email alert',
-    emptyDetail: 'No email alert loaded yet. Search your inbox above, then use a message as the alert.',
-  },
   HEALTH: {
     title: 'HealthCheck',
     loadHint:

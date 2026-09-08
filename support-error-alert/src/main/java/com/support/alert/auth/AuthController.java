@@ -58,7 +58,7 @@ public class AuthController {
                     "googleConfigError",
                     "Start with --support.auth.google-client-id=YOUR_ID.apps.googleusercontent.com or set GOOGLE_CLIENT_ID.");
         }
-        out.put("googleSsoOnly", authProperties.isGoogleSsoOnly());
+        out.put("googleSignInOnly", authProperties.isGoogleSignInOnly());
         out.put("jsonAlertsWithoutSignIn", authProperties.isJsonAlertsWithoutSignIn());
         boolean smtp = MailAuthSupport.isSmtpConfigured(environment);
         out.put("emailOtpConfigured", smtp);
@@ -83,9 +83,9 @@ public class AuthController {
 
     @PostMapping("/email/send-code")
     public ResponseEntity<Map<String, Object>> sendCode(@RequestBody Map<String, String> body) {
-        if (authProperties.isGoogleSsoOnly()) {
+        if (authProperties.isGoogleSignInOnly()) {
             return ResponseEntity.status(403)
-                    .body(Map.of("error", "Sign-in uses Google SSO only. Use Sign in with Google on the login page."));
+                    .body(Map.of("error", "Sign-in uses Google only. Use Sign in with Google on the login page."));
         }
         String email = body != null ? body.get("email") : null;
         try {
@@ -108,9 +108,9 @@ public class AuthController {
     public ResponseEntity<?> verifyEmail(
             @RequestBody Map<String, String> body,
             HttpServletResponse response) {
-        if (authProperties.isGoogleSsoOnly()) {
+        if (authProperties.isGoogleSignInOnly()) {
             return ResponseEntity.status(403)
-                    .body(Map.of("error", "Sign-in uses Google SSO only. Use Sign in with Google on the login page."));
+                    .body(Map.of("error", "Sign-in uses Google only. Use Sign in with Google on the login page."));
         }
         String email = body != null ? body.get("email") : null;
         String code = body != null ? body.get("code") : null;

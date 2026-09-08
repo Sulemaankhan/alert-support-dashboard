@@ -7,10 +7,17 @@ import './SiteHeader.css';
  * @param {Object} props
  * @param {{ email: string, displayName?: string } | null} [props.user]
  * @param {boolean} [props.guestMode]
+ * @param {boolean} [props.authEnabled]
  * @param {() => void | Promise<void>} [props.onSignOut]
- * @param {'home' | 'json' | 'email' | 'health'} [props.activeView]
+ * @param {'home' | 'json' | 'health'} [props.activeView]
  */
-export function SiteHeader({ user, guestMode = false, onSignOut, activeView = 'home' }) {
+export function SiteHeader({
+  user,
+  guestMode = false,
+  authEnabled = true,
+  onSignOut,
+  activeView = 'home',
+}) {
   return (
     <header className="site-header">
       <div className="site-header__inner">
@@ -45,20 +52,22 @@ export function SiteHeader({ user, guestMode = false, onSignOut, activeView = 'h
               })}
             </ul>
           </nav>
-          <div className="site-header__user">
-            {guestMode ? (
-              <span className="site-header__guest-label">Browsing without sign-in</span>
-            ) : (
-              <>
-                <span className="site-header__email" title={user?.email}>
-                  {user?.displayName || user?.email}
-                </span>
-                <button type="button" className="btn site-header__sign-out" onClick={onSignOut}>
-                  Sign out
-                </button>
-              </>
-            )}
-          </div>
+          {authEnabled ? (
+            <div className="site-header__user">
+              {guestMode ? (
+                <span className="site-header__guest-label">Browsing without sign-in</span>
+              ) : (
+                <>
+                  <span className="site-header__email" title={user?.email}>
+                    {user?.displayName || user?.email}
+                  </span>
+                  <button type="button" className="btn site-header__sign-out" onClick={onSignOut}>
+                    Sign out
+                  </button>
+                </>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
     </header>

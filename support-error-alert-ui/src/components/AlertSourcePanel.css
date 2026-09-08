@@ -36,14 +36,6 @@
   display: inline-flex;
 }
 
-.alert-source-panel__load .inbox-lookup {
-  margin: 0;
-  padding: 0;
-  border: none;
-  box-shadow: none;
-  background: transparent;
-}
-
 .alert-source-panel__detail-head {
   margin-bottom: 0.75rem;
 }

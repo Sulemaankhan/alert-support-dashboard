@@ -13,11 +13,11 @@ public class AuthProperties {
     /** How long a one-time email code remains valid. */
     private int otpTtlMinutes = 10;
 
-    /** Google OAuth client ID (Web) for Sign in with Google / Gmail SSO. */
+    /** Google OAuth client ID (Web) for Sign in with Google / Gmail access. */
     private String googleClientId = "";
 
-    /** When true, only Google SSO is offered (no email OTP sign-in). */
-    private boolean googleSsoOnly = true;
+    /** When true, only Google sign-in is offered (no email OTP). */
+    private boolean googleSignInOnly = true;
 
     /** When true, JSON alert APIs work without a session (email inbox still requires sign-in). */
     private boolean jsonAlertsWithoutSignIn = true;
@@ -63,12 +63,12 @@ public class AuthProperties {
         this.googleClientId = googleClientId;
     }
 
-    public boolean isGoogleSsoOnly() {
-        return googleSsoOnly;
+    public boolean isGoogleSignInOnly() {
+        return googleSignInOnly;
     }
 
-    public void setGoogleSsoOnly(boolean googleSsoOnly) {
-        this.googleSsoOnly = googleSsoOnly;
+    public void setGoogleSignInOnly(boolean googleSignInOnly) {
+        this.googleSignInOnly = googleSignInOnly;
     }
 
     public boolean isJsonAlertsWithoutSignIn() {

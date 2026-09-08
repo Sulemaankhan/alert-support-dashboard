@@ -7,7 +7,7 @@ import { useGoogleGmailAccess } from '../hooks/useGoogleGmailAccess.js';
 import './LoginPage.css';
 
 export function LoginPage() {
-  const { googleSsoOnly, jsonAlertsWithoutSignIn, enterGuestMode } = useAuth();
+  const { googleSignInOnly, jsonAlertsWithoutSignIn, enterGuestMode } = useAuth();
   const { requestAccess, googleConfigured } = useGoogleGmailAccess('signin');
   const [error, setError] = useState(/** @type {string | null} */ (null));
   const [busy, setBusy] = useState(false);
@@ -36,13 +36,13 @@ export function LoginPage() {
         </div>
 
         <p className="login-card__sub">
-          {googleSsoOnly
-            ? 'Sign in with your Google account to access the dashboard and Gmail inbox.'
-            : 'Sign in to load support alerts from JSON or your Gmail inbox.'}
+          {googleSignInOnly
+            ? 'Sign in with your Google account to access the dashboard.'
+            : 'Sign in to load support alerts from JSON.'}
         </p>
 
         {googleConfigured ? (
-          <div className="login-card__sso">
+          <div className="login-card__google">
             <button
               type="button"
               className="login-card__google-btn"
@@ -61,9 +61,7 @@ export function LoginPage() {
                 </>
               )}
             </button>
-            <p className="login-card__footnote">
-              Uses your Gmail account — inbox search works without an app password.
-            </p>
+            <p className="login-card__footnote">Uses your Google account for dashboard access.</p>
             {jsonAlertsWithoutSignIn ? (
               <button type="button" className="login-card__json-only" onClick={enterGuestMode}>
                 Continue with JSON alerts only
@@ -72,7 +70,7 @@ export function LoginPage() {
           </div>
         ) : (
           <details className="login-card__setup">
-            <summary>Google SSO is not configured yet</summary>
+            <summary>Google sign-in is not configured yet</summary>
             <ol className="login-card__setup-steps">
               <li>
                 In Google Cloud Console, create an OAuth <strong>Web client</strong> (
@@ -101,13 +99,15 @@ export function LoginPage() {
                 Authorized JavaScript origin: <span className="mono">http://localhost:5173</span>
               </li>
               <li>
-                Set in <span className="mono">google-oauth.properties</span>:
+                Set <span className="mono">support.auth.google-client-id</span> (or{' '}
+                <span className="mono">GOOGLE_CLIENT_ID</span>):
                 <pre className="login-card__setup-code">
                   support.auth.google-client-id=YOUR_ID.apps.googleusercontent.com
                 </pre>
               </li>
               <li>
-                <strong>Restart the backend</strong> — log must show <span className="mono">Gmail SSO ready</span>
+                <strong>Restart the backend</strong> — log must show{' '}
+                <span className="mono">Google sign-in ready</span>
               </li>
             </ol>
             <p className="login-card__setup-verify">

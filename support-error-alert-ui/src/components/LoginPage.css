@@ -50,7 +50,7 @@
   margin-right: auto;
 }
 
-.login-card__sso {
+.login-card__google {
   display: flex;
   flex-direction: column;
   align-items: stretch;

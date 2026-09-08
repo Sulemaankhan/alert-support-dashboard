@@ -1,6 +1,4 @@
 import { ALERT_SOURCE } from '../constants/alertSource.js';
-import { EmailAlertPanel } from './EmailAlertPanel.jsx';
-import { EmailSignInGate } from './EmailSignInGate.jsx';
 import { ErrorBanner } from './ErrorBanner.jsx';
 import { HealthCheckPanel } from './HealthCheckPanel.jsx';
 import { JsonAlertPanel } from './JsonAlertPanel.jsx';
@@ -13,11 +11,10 @@ import { useHealthCheck } from '../hooks/useHealthCheck.js';
 import { useNavView } from '../hooks/useNavView.js';
 
 export function Dashboard({ guestMode = false }) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, authEnabled } = useAuth();
   const navView = useNavView();
   const {
     jsonAlerts,
-    emailAlerts,
     loading,
     error,
     mutationBusy,
@@ -25,7 +22,6 @@ export function Dashboard({ guestMode = false }) {
     jiraSiteUrl,
     refresh,
     ingestFromFile,
-    ingestFromEmail,
     updateStatus,
     clearIngestedAlerts,
     createJiraIssue,
@@ -50,13 +46,14 @@ export function Dashboard({ guestMode = false }) {
       <SiteHeader
         user={user}
         guestMode={guestMode}
+        authEnabled={authEnabled}
         onSignOut={signOut}
         activeView={navView}
       />
       <div className="app">
         <ErrorBanner message={error} onDismiss={dismissError} />
 
-        {navView === 'home' ? <OverviewPanel guestMode={guestMode} /> : null}
+        {navView === 'home' ? <OverviewPanel /> : null}
 
         {navView === 'json' ? (
           <JsonAlertPanel
@@ -66,21 +63,6 @@ export function Dashboard({ guestMode = false }) {
             onClear={() => clearIngestedAlerts(ALERT_SOURCE.JSON)}
             {...sharedTableProps}
           />
-        ) : null}
-
-        {navView === 'email' ? (
-          guestMode ? (
-            <EmailSignInGate />
-          ) : (
-            <EmailAlertPanel
-              alerts={emailAlerts}
-              onEmailSelected={ingestFromEmail}
-              busy={busy}
-              defaultMailboxEmail={user?.email ?? ''}
-              onClear={() => clearIngestedAlerts(ALERT_SOURCE.EMAIL)}
-              {...sharedTableProps}
-            />
-          )
         ) : null}
 
         {navView === 'health' ? (

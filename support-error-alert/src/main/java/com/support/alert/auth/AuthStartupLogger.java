@@ -24,15 +24,15 @@ public class AuthStartupLogger {
         if (!authProperties.isEnabled()) {
             return;
         }
-        if (authProperties.isGoogleSsoOnly()) {
+        if (authProperties.isGoogleSignInOnly()) {
             if (!authProperties.isGoogleEnabled()) {
                 log.warn(
-                        "Gmail SSO is enabled but Google client ID is missing. "
+                        "Google sign-in is enabled but Google client ID is missing. "
                                 + "Start the service with --support.auth.google-client-id=YOUR_ID.apps.googleusercontent.com "
-                                + "or set GOOGLE_CLIENT_ID (see google-oauth.properties.example).");
+                                + "or set GOOGLE_CLIENT_ID.");
             } else {
                 log.info(
-                        "Gmail SSO ready (client ID {})",
+                        "Google sign-in ready (client ID {})",
                         maskClientId(authProperties.getGoogleClientId()));
             }
             return;
