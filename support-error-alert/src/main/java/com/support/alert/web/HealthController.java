@@ -10,6 +10,8 @@ import com.support.alert.health.HealthTargetCatalog;
 import com.support.alert.health.HealthTargetsView;
 import com.support.alert.health.HeapAnalysisService;
 import com.support.alert.health.HeapAnalysisView;
+import com.support.alert.health.ServiceHealthBoard;
+import com.support.alert.health.ServiceHealthService;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -28,16 +30,19 @@ public class HealthController {
     private final ApmRealtimeHub realtimeHub;
     private final HealthTargetCatalog targetCatalog;
     private final HeapAnalysisService heapAnalysisService;
+    private final ServiceHealthService serviceHealthService;
 
     public HealthController(
             ApmMetricsService apmMetricsService,
             ApmRealtimeHub realtimeHub,
             HealthTargetCatalog targetCatalog,
-            HeapAnalysisService heapAnalysisService) {
+            HeapAnalysisService heapAnalysisService,
+            ServiceHealthService serviceHealthService) {
         this.apmMetricsService = apmMetricsService;
         this.realtimeHub = realtimeHub;
         this.targetCatalog = targetCatalog;
         this.heapAnalysisService = heapAnalysisService;
+        this.serviceHealthService = serviceHealthService;
     }
 
     @GetMapping("/targets")
@@ -72,6 +77,11 @@ public class HealthController {
             @RequestParam(required = false) String env) {
         HealthTarget target = resolve(application, env);
         return heapAnalysisService.analyze(target);
+    }
+
+    @GetMapping("/apm/services")
+    public ServiceHealthBoard services(@RequestParam(required = false) String env) {
+        return serviceHealthService.board(env);
     }
 
     @GetMapping("/apm/stack")

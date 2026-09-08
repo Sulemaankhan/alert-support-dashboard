@@ -103,6 +103,36 @@ public class HealthTargetCatalog {
         return all.get(0);
     }
 
+    /**
+     * One target per application: matching {@code preferredEnv} when present, else {@code local}, else first.
+     */
+    public List<HealthTarget> primaryTargets(String preferredEnv) {
+        Map<String, List<HealthTarget>> byApp = new LinkedHashMap<>();
+        for (HealthTarget target : list()) {
+            byApp.computeIfAbsent(target.applicationId(), ignored -> new ArrayList<>()).add(target);
+        }
+        String wanted = blankToNull(preferredEnv);
+        List<HealthTarget> selected = new ArrayList<>();
+        byApp.forEach((appId, envs) -> selected.add(pickEnvironment(envs, wanted)));
+        return List.copyOf(selected);
+    }
+
+    private static HealthTarget pickEnvironment(List<HealthTarget> envs, String wanted) {
+        if (wanted != null) {
+            for (HealthTarget target : envs) {
+                if (target.environmentId().equalsIgnoreCase(wanted)) {
+                    return target;
+                }
+            }
+        }
+        for (HealthTarget target : envs) {
+            if ("local".equalsIgnoreCase(target.environmentId())) {
+                return target;
+            }
+        }
+        return envs.get(0);
+    }
+
     public List<HealthTarget> list() {
         List<HealthTarget> out = new ArrayList<>();
         Map<String, HealthCheckProperties.ApplicationConfig> applications = properties.getApplications();

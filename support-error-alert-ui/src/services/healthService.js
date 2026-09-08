@@ -481,3 +481,49 @@ export function subscribeAlertsStream(handlers) {
     error: handlers.onError,
   });
 }
+
+/**
+ * @typedef {Object} ServiceHealthView
+ * @property {string} applicationId
+ * @property {string} applicationName
+ * @property {string} environment
+ * @property {string} environmentLabel
+ * @property {string} serviceName
+ * @property {string} source
+ * @property {string} targetUrl
+ * @property {string} status
+ * @property {string} timestamp
+ * @property {number} uptimeMs
+ * @property {number} apdex
+ * @property {string} apdexRating
+ * @property {number} heapUsedPercent
+ * @property {number} requestsPerMinute
+ * @property {number} errorRatePercent
+ * @property {number} avgLatencyMs
+ * @property {string} liveness
+ * @property {string} readiness
+ * @property {string} healthStatus
+ * @property {string} databaseStatus
+ * @property {number} environmentCount
+ */
+
+/**
+ * @typedef {Object} ServiceHealthBoard
+ * @property {string} timestamp
+ * @property {string} environment
+ * @property {number} serviceCount
+ * @property {number} upCount
+ * @property {number} degradedCount
+ * @property {number} downCount
+ * @property {ServiceHealthView[]} services
+ */
+
+/**
+ * Health status for every configured application (n+1).
+ * @param {string} [env]
+ * @returns {Promise<ServiceHealthBoard>}
+ */
+export async function fetchServiceHealth(env) {
+  const res = await request(`/api/health/apm/services${targetQuery('', env)}`);
+  return res.json();
+}
