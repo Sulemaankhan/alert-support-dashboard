@@ -1,6 +1,7 @@
 package com.support.alert.health;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.lang.management.ManagementFactory;
@@ -20,14 +21,19 @@ public class HeapAnalysisService {
 
     private final HealthCheckProperties properties;
     private final RemoteActuatorClient actuatorClient;
+    private final int serverPort;
 
-    public HeapAnalysisService(HealthCheckProperties properties, RemoteActuatorClient actuatorClient) {
+    public HeapAnalysisService(
+            HealthCheckProperties properties,
+            RemoteActuatorClient actuatorClient,
+            @Value("${server.port:8081}") int serverPort) {
         this.properties = properties;
         this.actuatorClient = actuatorClient;
+        this.serverPort = serverPort;
     }
 
     public HeapAnalysisView analyze(HealthTarget target) {
-        if (target.isRemote()) {
+        if (!target.usesLocalJvm(serverPort)) {
             return analyzeRemote(target);
         }
         return analyzeLocal(target);

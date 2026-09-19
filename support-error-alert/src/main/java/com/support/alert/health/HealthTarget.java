@@ -19,6 +19,22 @@ public record HealthTarget(
         return url != null && !url.isBlank();
     }
 
+    /**
+     * This dashboard process: blank URL, or an Actuator URL on this host and {@code server.port}.
+     * Self-scrape over HTTP is empty because metric endpoints require a session.
+     */
+    public boolean usesLocalJvm(int serverPort) {
+        if (!isRemote()) {
+            return true;
+        }
+        String base = normalizedActuatorBaseUrl();
+        if (!SameHostJvmLocator.isSameHost(base)) {
+            return false;
+        }
+        int port = SameHostJvmLocator.portOf(base);
+        return port > 0 && port == serverPort;
+    }
+
     public String normalizedActuatorBaseUrl() {
         return HealthCheckProperties.normalizeActuatorUrl(url);
     }

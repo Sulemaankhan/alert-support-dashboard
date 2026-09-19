@@ -17,12 +17,15 @@ public class HealthTargetCatalog {
 
     private final HealthCheckProperties properties;
     private final String localServiceName;
+    private final int serverPort;
 
     public HealthTargetCatalog(
             HealthCheckProperties properties,
-            @Value("${spring.application.name:support-error-alert}") String localServiceName) {
+            @Value("${spring.application.name:support-error-alert}") String localServiceName,
+            @Value("${server.port:8081}") int serverPort) {
         this.properties = properties;
         this.localServiceName = localServiceName;
+        this.serverPort = serverPort;
     }
 
     public HealthTargetsView view() {
@@ -38,9 +41,9 @@ public class HealthTargetCatalog {
                     .map(t -> new HealthTargetsView.Environment(
                             t.environmentId(),
                             t.environmentLabel(),
-                            t.isRemote() ? t.normalizedActuatorBaseUrl() : "local",
+                            t.usesLocalJvm(serverPort) ? "local" : t.normalizedActuatorBaseUrl(),
                             t.resolvedServiceName(localServiceName),
-                            t.isRemote() ? "remote" : "local"
+                            t.usesLocalJvm(serverPort) ? "local" : "remote"
                     ))
                     .toList();
             applications.add(new HealthTargetsView.Application(appId, name, environments));

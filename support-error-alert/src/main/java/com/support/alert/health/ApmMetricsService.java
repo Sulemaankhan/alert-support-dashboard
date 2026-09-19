@@ -35,6 +35,7 @@ public class ApmMetricsService {
     private static final int STACK_FRAMES = 12;
 
     private final String localServiceName;
+    private final int serverPort;
     private final HealthCheckProperties healthCheckProperties;
     private final TargetApmRegistry targetApmRegistry;
     private final MeterRegistry meterRegistry;
@@ -42,11 +43,13 @@ public class ApmMetricsService {
 
     public ApmMetricsService(
             @Value("${spring.application.name:support-error-alert}") String localServiceName,
+            @Value("${server.port:8081}") int serverPort,
             HealthCheckProperties healthCheckProperties,
             TargetApmRegistry targetApmRegistry,
             MeterRegistry meterRegistry,
             HealthEndpoint healthEndpoint) {
         this.localServiceName = localServiceName;
+        this.serverPort = serverPort;
         this.healthCheckProperties = healthCheckProperties;
         this.targetApmRegistry = targetApmRegistry;
         this.meterRegistry = meterRegistry;
@@ -59,7 +62,7 @@ public class ApmMetricsService {
 
     public synchronized ApmSnapshot snapshot(HealthTarget target, boolean includeStacks) {
         TargetApmSession session = targetApmRegistry.session(target);
-        ApmSnapshot base = target.isRemote() && session.remoteCollector != null
+        ApmSnapshot base = !target.usesLocalJvm(serverPort) && session.remoteCollector != null
                 ? session.remoteCollector.collect(includeStacks)
                 : localSnapshot(target, session, includeStacks);
         return base.withAlerts(session.alertTracker.evaluate(base));
@@ -67,7 +70,7 @@ public class ApmMetricsService {
 
     public synchronized List<ApmSnapshot.ThreadStack> fullStackDump(HealthTarget target) {
         TargetApmSession session = targetApmRegistry.session(target);
-        if (target.isRemote() && session.remoteCollector != null) {
+        if (!target.usesLocalJvm(serverPort) && session.remoteCollector != null) {
             return session.remoteCollector.fullStackDump();
         }
         return readTopStacks(ManagementFactory.getThreadMXBean(), 40, 40);
