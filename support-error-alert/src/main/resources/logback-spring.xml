@@ -4,87 +4,48 @@
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
 
     <springProperty scope="context" name="LOG_PATH" source="logging.file.path" defaultValue="logs"/>
-    <springProperty scope="context" name="LOG_FILE" source="logging.file.name" defaultValue="logs/jira-support-alert.json"/>
+    <springProperty scope="context" name="LOG_FILE" source="logging.file.name" defaultValue="logs/jira-support-alert.log"/>
     <springProperty scope="context" name="ROOT_LOG_LEVEL" source="logging.level.root" defaultValue="INFO"/>
     <springProperty scope="context" name="ROLLING_MAX_FILE_SIZE" source="logging.logback.rollingpolicy.max-file-size" defaultValue="10MB"/>
     <springProperty scope="context" name="ROLLING_MAX_HISTORY" source="logging.logback.rollingpolicy.max-history" defaultValue="30"/>
     <springProperty scope="context" name="ROLLING_TOTAL_SIZE_CAP" source="logging.logback.rollingpolicy.total-size-cap" defaultValue="500MB"/>
 
-    <property name="LOCAL_LOG_PATTERN"
+    <property name="TEXT_LOG_PATTERN"
               value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} [%file:%line %method] - %msg%n"/>
 
-    <!-- Optional local profile for human-readable IDE logs (spring.profiles.active=local) -->
-    <springProfile name="local">
-        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-                <level>${CONSOLE_LOG_THRESHOLD}</level>
-            </filter>
-            <encoder>
-                <pattern>${LOCAL_LOG_PATTERN}</pattern>
-                <charset>${CONSOLE_LOG_CHARSET}</charset>
-            </encoder>
-        </appender>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>${CONSOLE_LOG_THRESHOLD}</level>
+        </filter>
+        <encoder>
+            <pattern>${TEXT_LOG_PATTERN}</pattern>
+            <charset>${CONSOLE_LOG_CHARSET}</charset>
+        </encoder>
+    </appender>
 
-        <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-            <file>${LOG_FILE}</file>
-            <immediateFlush>true</immediateFlush>
-            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-                <level>${FILE_LOG_THRESHOLD}</level>
-            </filter>
-            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-                <fileNamePattern>${LOG_PATH}/jira-support-alert.%d{yyyy-MM-dd}.%i.json.gz</fileNamePattern>
-                <maxFileSize>${ROLLING_MAX_FILE_SIZE}</maxFileSize>
-                <maxHistory>${ROLLING_MAX_HISTORY}</maxHistory>
-                <totalSizeCap>${ROLLING_TOTAL_SIZE_CAP}</totalSizeCap>
-            </rollingPolicy>
-            <encoder>
-                <pattern>${LOCAL_LOG_PATTERN}</pattern>
-                <charset>${FILE_LOG_CHARSET}</charset>
-            </encoder>
-        </appender>
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_FILE}</file>
+        <immediateFlush>true</immediateFlush>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>${FILE_LOG_THRESHOLD}</level>
+        </filter>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/jira-support-alert.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>${ROLLING_MAX_FILE_SIZE}</maxFileSize>
+            <maxHistory>${ROLLING_MAX_HISTORY}</maxHistory>
+            <totalSizeCap>${ROLLING_TOTAL_SIZE_CAP}</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${TEXT_LOG_PATTERN}</pattern>
+            <charset>${FILE_LOG_CHARSET}</charset>
+        </encoder>
+    </appender>
 
-        <root level="${ROOT_LOG_LEVEL}">
-            <appender-ref ref="CONSOLE"/>
-            <appender-ref ref="FILE"/>
-        </root>
-    </springProfile>
+    <logger name="org.springframework" level="WARN"/>
+    <logger name="org.apache" level="WARN"/>
 
-    <!-- Default: ECS JSON (one object per line) on console and rolling file -->
-    <springProfile name="!local">
-        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-                <level>${CONSOLE_LOG_THRESHOLD}</level>
-            </filter>
-            <encoder class="org.springframework.boot.logging.logback.StructuredLogEncoder">
-                <format>${CONSOLE_LOG_STRUCTURED_FORMAT}</format>
-                <charset>${CONSOLE_LOG_CHARSET}</charset>
-            </encoder>
-        </appender>
-
-        <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-            <file>${LOG_FILE}</file>
-            <immediateFlush>true</immediateFlush>
-            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-                <level>${FILE_LOG_THRESHOLD}</level>
-            </filter>
-            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-                <fileNamePattern>${LOG_PATH}/jira-support-alert.%d{yyyy-MM-dd}.%i.json.gz</fileNamePattern>
-                <maxFileSize>${ROLLING_MAX_FILE_SIZE}</maxFileSize>
-                <maxHistory>${ROLLING_MAX_HISTORY}</maxHistory>
-                <totalSizeCap>${ROLLING_TOTAL_SIZE_CAP}</totalSizeCap>
-            </rollingPolicy>
-            <encoder class="org.springframework.boot.logging.logback.StructuredLogEncoder">
-                <format>${FILE_LOG_STRUCTURED_FORMAT}</format>
-                <charset>${FILE_LOG_CHARSET}</charset>
-            </encoder>
-        </appender>
-
-        <logger name="org.springframework" level="WARN"/>
-        <logger name="org.apache" level="WARN"/>
-
-        <root level="${ROOT_LOG_LEVEL}">
-            <appender-ref ref="CONSOLE"/>
-            <appender-ref ref="FILE"/>
-        </root>
-    </springProfile>
+    <root level="${ROOT_LOG_LEVEL}">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
 </configuration>

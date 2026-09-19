@@ -20,7 +20,7 @@ public class LoggingStartupInfo implements ApplicationRunner {
     @Value("${server.port}")
     private int serverPort;
 
-    @Value("${logging.file.name:logs/jira-support-alert.json}")
+    @Value("${logging.file.name:logs/jira-support-alert.log}")
     private String logFile;
 
     @Override
