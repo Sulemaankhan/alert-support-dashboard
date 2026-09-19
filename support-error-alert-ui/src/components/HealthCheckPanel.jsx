@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { SECTION } from '../constants/branding.js';
+import { ALL_APPLICATIONS, isAllApplications, uniqueEnvironments } from '../constants/healthTargets.js';
+import { selectFleetView } from '../lib/mergeFleetApm.js';
 import { NAV_SECTION } from '../constants/nav.js';
 import * as healthService from '../services/healthService.js';
 import './AlertSourcePanel.css';
@@ -440,8 +442,10 @@ function ApdexRing({ score = 0, rating = '—' }) {
   const angle = pct * 360;
   return (
     <div className={`health-apdex-ring ${apdexClass(score)}`} style={{ '--apdex-angle': `${angle}deg` }}>
+      <div className="health-apdex-ring__halo" aria-hidden="true" />
       <div className="health-apdex-ring__sweep" aria-hidden="true" />
       <div className="health-apdex-ring__inner">
+        <span className="health-apdex-ring__kicker">Apdex</span>
         <span className="health-apdex-ring__score mono">{formatNum(score, 2)}</span>
         <span className="health-apdex-ring__label">{rating}</span>
       </div>
@@ -556,6 +560,52 @@ function txMetricUnit(sort) {
   if (sort === 'latency') return 'ms';
   if (sort === 'apdex') return '';
   return '';
+}
+
+function sortTransactions(transactions, sort) {
+  const list = (transactions ?? []).filter((tx) => {
+    const uri = String(tx?.uri ?? '');
+    const lower = uri.toLowerCase();
+    if (!uri || uri === 'ROOT' || uri === '/**') return false;
+    if (lower.startsWith('/actuator') || lower.includes('{requiredmetricname}')) return false;
+    if (lower.startsWith('/api/health')) return false;
+    return true;
+  });
+  list.sort((a, b) => {
+    if (sort === 'errors') return (b.errorRatePercent ?? 0) - (a.errorRatePercent ?? 0);
+    if (sort === 'latency') return (b.avgMs ?? 0) - (a.avgMs ?? 0);
+    if (sort === 'apdex') return (a.apdex ?? 1) - (b.apdex ?? 1);
+    return (b.count ?? 0) - (a.count ?? 0);
+  });
+  return list;
+}
+
+function ServiceScopeBar({ applications = [], value, onChange }) {
+  if (!applications.length) return null;
+  return (
+    <div className="health-service-scope" role="group" aria-label="Sort by service">
+      <span className="health-service-scope__label">Service</span>
+      <div className="health-service-scope__pills">
+        <button
+          type="button"
+          className={isAllApplications(value) ? 'health-tx__pill health-tx__pill--on' : 'health-tx__pill'}
+          onClick={() => onChange(ALL_APPLICATIONS)}
+        >
+          All services
+        </button>
+        {applications.map((app) => (
+          <button
+            key={app.id}
+            type="button"
+            className={value === app.id ? 'health-tx__pill health-tx__pill--on' : 'health-tx__pill'}
+            onClick={() => onChange(app.id)}
+          >
+            {app.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function formatTxMetric(tx, sort) {
@@ -1765,7 +1815,7 @@ function MemoryGcBoard({ snapshot, samples = [], application = '', environment =
   const [classSort, setClassSort] = useState(/** @type {'bytes' | 'instances' | 'name'} */ ('bytes'));
 
   const loadHeapAnalysis = useCallback(async () => {
-    if (!application || !environment) return;
+    if (!application || !environment || isAllApplications(application)) return;
     setAnalysisLoading(true);
     setAnalysisError(null);
     try {
@@ -1779,8 +1829,13 @@ function MemoryGcBoard({ snapshot, samples = [], application = '', environment =
   }, [application, environment]);
 
   useEffect(() => {
+    if (isAllApplications(application)) {
+      setHeapAnalysis(null);
+      setAnalysisError(null);
+      return;
+    }
     loadHeapAnalysis();
-  }, [loadHeapAnalysis]);
+  }, [application, loadHeapAnalysis]);
   const heap = snapshot?.heap;
   const nonHeap = snapshot?.nonHeap;
   const gc = snapshot?.gc;
@@ -2007,7 +2062,9 @@ function MemoryGcBoard({ snapshot, samples = [], application = '', environment =
           <div>
             <h3 id="heap-analysis-heading" className="health-stack__title">Heap analysis</h3>
             <p className="health-metric__sub">
-              Retained memory by pool and shallow bytes per class (live GC histogram)
+              {isAllApplications(application)
+                ? 'Select one application to run a live GC histogram'
+                : 'Retained memory by pool and shallow bytes per class (live GC histogram)'}
               {heapAnalysis?.timestamp ? ` · ${formatRelative(heapAnalysis.timestamp)}` : ''}
             </p>
             {heapAnalysis?.histogramNote ? (
@@ -2018,7 +2075,7 @@ function MemoryGcBoard({ snapshot, samples = [], application = '', environment =
             type="button"
             className="btn health-btn"
             onClick={loadHeapAnalysis}
-            disabled={analysisLoading || !application || !environment}
+            disabled={analysisLoading || !application || !environment || isAllApplications(application)}
           >
             {analysisLoading ? 'Analyzing…' : 'Refresh analysis'}
           </button>
@@ -2171,7 +2228,7 @@ function MetricsLiveBoard({
   paused = false,
   tick = 0,
   title = 'Overview',
-  subtitle = 'Command center · updates about every second',
+  subtitle = 'Live command center · streaming telemetry',
 }) {
   const streaming = !paused && (live || metricsLive || alertsLive);
   const rpm = Number(snapshot?.requests?.requestsPerMinute) || 0;
@@ -3579,7 +3636,7 @@ function ExternalBoard({ snapshot, samples = [], live = false, tick = 0 }) {
  *   onOpenService?: (applicationId: string, environmentId: string) => void,
  * }} props
  */
-function ServicesBoard({ environment = '', selectedApplication = '', live = false, onOpenService }) {
+function ServicesBoard({ environment = '', selectedApplication = '', serviceFilter = '', live = false, onOpenService }) {
   const [board, setBoard] = useState(/** @type {import('../services/healthService.js').ServiceHealthBoard | null} */ (null));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(/** @type {string | null} */ (null));
@@ -3603,10 +3660,15 @@ function ServicesBoard({ environment = '', selectedApplication = '', live = fals
     return () => clearInterval(timer);
   }, [load]);
 
-  const services = board?.services ?? [];
-  const up = board?.upCount ?? 0;
-  const degraded = board?.degradedCount ?? 0;
-  const down = board?.downCount ?? 0;
+  const services = (board?.services ?? []).filter((svc) => (
+    !serviceFilter || isAllApplications(serviceFilter) || svc.applicationId === serviceFilter
+  ));
+  const up = services.filter((svc) => String(svc.status || '').toUpperCase() === 'UP').length;
+  const degraded = services.filter((svc) => {
+    const status = String(svc.status || '').toUpperCase();
+    return status === 'DEGRADED' || status === 'OUT_OF_SERVICE';
+  }).length;
+  const down = Math.max(0, services.length - up - degraded);
 
   return (
     <div className={`health-svc${live ? ' health-svc--live' : ''}`}>
@@ -3629,7 +3691,7 @@ function ServicesBoard({ environment = '', selectedApplication = '', live = fals
       <div className="health-mem__kpis">
         <div className="health-mem__kpi">
           <span>Services</span>
-          <strong className="mono">{board?.serviceCount ?? services.length}</strong>
+          <strong className="mono">{services.length}</strong>
           <em>configured applications</em>
         </div>
         <div className="health-mem__kpi health-mem__kpi--ok">
@@ -3658,7 +3720,8 @@ function ServicesBoard({ environment = '', selectedApplication = '', live = fals
         <ul className="health-svc__grid">
           {services.map((svc) => {
             const tone = shellTone(svc.status);
-            const selected = svc.applicationId === selectedApplication;
+            const selected = Boolean(selectedApplication) && !isAllApplications(selectedApplication)
+              && svc.applicationId === selectedApplication;
             return (
               <li key={svc.applicationId}>
                 <button
@@ -3725,6 +3788,7 @@ function ServicesBoard({ environment = '', selectedApplication = '', live = fals
  * @param {string} [props.environment]
  * @param {function(string): void} [props.onSelectApplication]
  * @param {function(string): void} [props.onSelectEnvironment]
+ * @param {any[]} [props.fleetEntries]
  * @param {import('../services/healthService.js').ApmSnapshot | null} props.snapshot
  * @param {import('../services/healthService.js').ApmAlertEvent[]} [props.alerts]
  * @param {import('../services/healthService.js').ApmAlertEvent[]} [props.activeAlerts]
@@ -3752,6 +3816,7 @@ export function HealthCheckPanel({
   environment = '',
   onSelectApplication,
   onSelectEnvironment,
+  fleetEntries = [],
   snapshot,
   alerts: alertsProp,
   activeAlerts = [],
@@ -3775,51 +3840,67 @@ export function HealthCheckPanel({
 }) {
   const [tab, setTab] = useState('overview');
   const [txSort, setTxSort] = useState('count');
+  const [sectionService, setSectionService] = useState(/** @type {Record<string, string>} */ ({}));
+  const fleetMode = isAllApplications(application);
+  const currentScope = fleetMode ? (sectionService[tab] || ALL_APPLICATIONS) : application;
 
   useEffect(() => {
     if (['metrics', 'health', 'probes', 'heap', 'load'].includes(tab)) {
       setTab('overview');
     }
   }, [tab]);
-  const samples = snapshot?.recentSamples ?? [];
+
   const status = snapshot?.status ?? (loading ? '…' : 'UNKNOWN');
-  const stacks = fullStacks.length ? fullStacks : snapshot?.topStacks ?? [];
-  const transactions = snapshot?.transactions ?? [];
   const alerts = alertsProp ?? snapshot?.alerts ?? [];
   const tone = shellTone(status);
   const appId = useId();
   const envId = useId();
   const applications = catalog?.applications ?? [];
-  const selectedApp = applications.find((item) => item.id === application) ?? applications[0] ?? null;
-  const environments = selectedApp?.environments ?? [];
+  const selectedApp = fleetMode
+    ? null
+    : (applications.find((item) => item.id === application) ?? applications[0] ?? null);
+  const environments = fleetMode ? uniqueEnvironments(applications) : (selectedApp?.environments ?? []);
   const selectedEnv = environments.find((item) => item.id === environment) ?? environments[0] ?? null;
-  const displayName = snapshot?.applicationName || selectedApp?.name || snapshot?.serviceName || '—';
+  const displayName = fleetMode
+    ? 'All applications'
+    : (snapshot?.applicationName || selectedApp?.name || snapshot?.serviceName || '—');
   const displayEnv = snapshot?.environmentLabel || selectedEnv?.label || snapshot?.environment || environment || '';
   const targetUrl = snapshot?.targetUrl || selectedEnv?.url || '';
 
-  const sortedTransactions = useMemo(() => {
-    const list = transactions.filter((tx) => {
-      const uri = String(tx?.uri ?? '');
-      const lower = uri.toLowerCase();
-      if (!uri || uri === 'ROOT' || uri === '/**') return false;
-      if (lower.startsWith('/actuator') || lower.includes('{requiredmetricname}')) return false;
-      if (lower.startsWith('/api/health')) return false;
-      return true;
-    });
-    list.sort((a, b) => {
-      if (txSort === 'errors') return (b.errorRatePercent ?? 0) - (a.errorRatePercent ?? 0);
-      if (txSort === 'latency') return (b.avgMs ?? 0) - (a.avgMs ?? 0);
-      if (txSort === 'apdex') return (a.apdex ?? 1) - (b.apdex ?? 1);
-      return (b.count ?? 0) - (a.count ?? 0);
-    });
-    return list;
-  }, [transactions, txSort]);
+  const scoped = useMemo(() => {
+    if (!fleetMode) {
+      return {
+        snapshot,
+        alerts,
+        activeAlerts,
+        activeAlertCount,
+        application,
+        environment,
+      };
+    }
+    return selectFleetView(fleetEntries, currentScope, environment);
+  }, [fleetMode, snapshot, alerts, activeAlerts, activeAlertCount, application, environment, fleetEntries, currentScope]);
+
+  const scopedSnapshot = scoped.snapshot;
+  const scopedSamples = scopedSnapshot?.recentSamples ?? [];
+  const scopedAlerts = scoped.alerts ?? [];
+  const scopedActiveAlerts = scoped.activeAlerts ?? [];
+  const scopedActiveCount = scoped.activeCount ?? 0;
+  const stacks = fullStacks.length ? fullStacks : scopedSnapshot?.topStacks ?? [];
+
+  const sortedTransactions = useMemo(
+    () => sortTransactions(scopedSnapshot?.transactions ?? [], txSort),
+    [scopedSnapshot?.transactions, txSort],
+  );
 
   useEffect(() => {
-    if (tab === 'stack' && onRefreshStack) {
-      onRefreshStack();
+    if (tab !== 'stack' || !onRefreshStack) return;
+    if (fleetMode && !isAllApplications(currentScope)) {
+      onRefreshStack(currentScope);
+      return;
     }
-  }, [tab, onRefreshStack]);
+    onRefreshStack();
+  }, [tab, onRefreshStack, fleetMode, currentScope]);
 
   const isStreaming = !paused && (live || metricsLive || alertsLive);
 
@@ -3829,7 +3910,7 @@ export function HealthCheckPanel({
       id={NAV_SECTION.HEALTH_CHECK}
       aria-labelledby="health-check-heading"
     >
-      <div className="health-live-bar" aria-live="polite">
+      <div className={`health-live-bar${isStreaming ? ' health-live-bar--live' : ''}`} aria-live="polite">
         <div className="health-live-bar__left">
           <span
             className={
@@ -3841,7 +3922,11 @@ export function HealthCheckPanel({
             }
           >
             <span className="health-live__dot" aria-hidden="true" />
-            {paused ? 'Paused' : isStreaming ? (mode === 'poll' ? 'Live · polling' : 'Live · streaming') : 'Connecting…'}
+            {paused
+              ? 'Paused'
+              : isStreaming
+                ? (mode === 'poll' ? (fleetMode ? 'Live · fleet' : 'Live · polling') : 'Live · streaming')
+                : 'Connecting…'}
           </span>
           <span className="health-live-bar__tick mono" key={metricsTick}>
             tick #{metricsTick}
@@ -3861,7 +3946,7 @@ export function HealthCheckPanel({
 
       <div className="health-hero">
         <div className="health-hero__copy">
-          <p className="health-hero__eyebrow">Realtime APM</p>
+          <p className="health-hero__eyebrow">HealthCheck · live telemetry</p>
           <h2 id="health-check-heading" className="health-hero__title">
             {SECTION.HEALTH.title}
           </h2>
@@ -3871,16 +3956,19 @@ export function HealthCheckPanel({
               <select
                 id={appId}
                 className="health-target-picker__select"
-                value={selectedApp?.id ?? ''}
+                value={fleetMode ? ALL_APPLICATIONS : (selectedApp?.id ?? '')}
                 disabled={!applications.length || !onSelectApplication}
                 onChange={(event) => onSelectApplication?.(event.target.value)}
               >
                 {applications.length ? (
-                  applications.map((app) => (
-                    <option key={app.id} value={app.id}>
-                      {app.name}
-                    </option>
-                  ))
+                  <>
+                    <option value={ALL_APPLICATIONS}>All applications</option>
+                    {applications.map((app) => (
+                      <option key={app.id} value={app.id}>
+                        {app.name}
+                      </option>
+                    ))}
+                  </>
                 ) : (
                   <option value="">Loading…</option>
                 )}
@@ -3910,7 +3998,11 @@ export function HealthCheckPanel({
           <p className="health-hero__service">
             <span className="health-hero__service-name">{displayName}</span>
             {displayEnv ? <span className="health-hero__env">{displayEnv}</span> : null}
-            {targetUrl && targetUrl !== 'local' ? (
+            {fleetMode ? (
+              <span className="health-hero__target">
+                {applications.length} configured service{applications.length === 1 ? '' : 's'}
+              </span>
+            ) : targetUrl && targetUrl !== 'local' ? (
               <span className="health-hero__target mono">{targetUrl}</span>
             ) : (
               <span className="health-hero__target">Local JVM</span>
@@ -3926,10 +4018,10 @@ export function HealthCheckPanel({
         </div>
 
         <div className="health-hero__side">
-          <div className={`health-status-orb health-status-orb--${tone}`}>
+          <div className={`health-status-orb health-status-orb--${tone}${isStreaming ? ' health-status-orb--live' : ''}`}>
             <div className="health-status-orb__row">
               <span className={`health-status ${statusClass(status)}`}>{status}</span>
-              {isStreaming ? <span className="health-status-orb__live">realtime</span> : null}
+              {isStreaming ? <span className="health-status-orb__live">live</span> : null}
             </div>
             <span className="health-status-orb__meta">
               uptime {formatUptime(snapshot?.uptimeMs)}
@@ -3989,7 +4081,7 @@ export function HealthCheckPanel({
               type="button"
               role="tab"
               aria-selected={tab === item.id}
-              className={tab === item.id ? 'health-apm-tab health-apm-tab--active' : 'health-apm-tab'}
+              className={`health-apm-tab health-apm-tab--${item.id}${tab === item.id ? ' health-apm-tab--active' : ''}`}
               onClick={() => setTab(item.id)}
             >
               <span className="health-apm-tab__label">{item.label}</span>
@@ -4022,12 +4114,21 @@ export function HealthCheckPanel({
         </div>
       </nav>
 
-      <div key={tab} className="health-tab-stage">
+      <div key={tab} className={`health-tab-stage health-tab-stage--${tab}`}>
+        {fleetMode ? (
+          <ServiceScopeBar
+            applications={applications}
+            value={currentScope}
+            onChange={(id) => setSectionService((prev) => ({ ...prev, [tab]: id }))}
+          />
+        ) : null}
+
         {tab === 'services' ? (
           <ServicesBoard
             environment={environment}
-            selectedApplication={application}
-            live={isStreaming}
+            selectedApplication={currentScope}
+            serviceFilter={currentScope}
+            live={fleetMode || isStreaming}
             onOpenService={(appId, envId) => {
               onSelectApplication?.(appId);
               if (envId) onSelectEnvironment?.(envId);
@@ -4038,10 +4139,10 @@ export function HealthCheckPanel({
 
         {tab === 'overview' ? (
           <MetricsLiveBoard
-            snapshot={snapshot}
-            samples={samples}
-            activeAlertCount={activeAlertCount}
-            activeAlerts={activeAlerts}
+            snapshot={scopedSnapshot}
+            samples={scopedSamples}
+            activeAlertCount={scopedActiveCount}
+            activeAlerts={scopedActiveAlerts}
             live={live}
             metricsLive={metricsLive}
             alertsLive={alertsLive}
@@ -4052,10 +4153,10 @@ export function HealthCheckPanel({
 
         {tab === 'memory' ? (
           <MemoryGcBoard
-            snapshot={snapshot}
-            samples={samples}
-            application={application}
-            environment={environment}
+            snapshot={scopedSnapshot}
+            samples={scopedSamples}
+            application={scoped.application}
+            environment={scoped.environment}
             live={isStreaming}
             tick={metricsTick}
           />
@@ -4071,9 +4172,9 @@ export function HealthCheckPanel({
 
         {tab === 'latency' ? (
           <LatencyBoard
-            snapshot={snapshot}
+            snapshot={scopedSnapshot}
             transactions={sortedTransactions}
-            samples={samples}
+            samples={scopedSamples}
             live={isStreaming}
             tick={metricsTick}
           />
@@ -4081,9 +4182,9 @@ export function HealthCheckPanel({
 
         {tab === 'errors' ? (
           <ErrorsBoard
-            snapshot={snapshot}
+            snapshot={scopedSnapshot}
             transactions={sortedTransactions}
-            samples={samples}
+            samples={scopedSamples}
             live={isStreaming}
             tick={metricsTick}
           />
@@ -4091,8 +4192,8 @@ export function HealthCheckPanel({
 
         {tab === 'database' ? (
           <DatabaseBoard
-            snapshot={snapshot}
-            samples={samples}
+            snapshot={scopedSnapshot}
+            samples={scopedSamples}
             live={isStreaming}
             tick={metricsTick}
           />
@@ -4100,7 +4201,7 @@ export function HealthCheckPanel({
 
         {tab === 'map' ? (
           <ServiceMapBoard
-            snapshot={snapshot}
+            snapshot={scopedSnapshot}
             live={isStreaming}
             tick={metricsTick}
           />
@@ -4108,8 +4209,8 @@ export function HealthCheckPanel({
 
         {tab === 'external' ? (
           <ExternalBoard
-            snapshot={snapshot}
-            samples={samples}
+            snapshot={scopedSnapshot}
+            samples={scopedSamples}
             live={isStreaming}
             tick={metricsTick}
           />
@@ -4117,10 +4218,10 @@ export function HealthCheckPanel({
 
         {tab === 'alerts' ? (
           <AlertsBoard
-            snapshot={snapshot}
-            alerts={alerts}
-            activeAlerts={activeAlerts}
-            activeAlertCount={activeAlertCount}
+            snapshot={scopedSnapshot}
+            alerts={scopedAlerts}
+            activeAlerts={scopedActiveAlerts}
+            activeAlertCount={scopedActiveCount}
             live={(alertsLive || live || metricsLive) && !paused}
             tick={metricsTick}
           />
@@ -4134,7 +4235,12 @@ export function HealthCheckPanel({
                 <p className="health-metric__sub">CPU-ordered thread dump from the monitored process.</p>
               </div>
               {onRefreshStack ? (
-                <button type="button" className="btn health-btn" onClick={onRefreshStack} disabled={stackLoading}>
+                <button
+                  type="button"
+                  className="btn health-btn"
+                  onClick={() => onRefreshStack(fleetMode && !isAllApplications(currentScope) ? currentScope : undefined)}
+                  disabled={stackLoading}
+                >
                   {stackLoading ? 'Loading…' : 'Dump stacks'}
                 </button>
               ) : null}

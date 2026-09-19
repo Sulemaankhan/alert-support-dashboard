@@ -91,6 +91,7 @@ export function Dashboard({ guestMode = false }) {
             onSelectApplication={health.selectApplication}
             onSelectEnvironment={health.selectEnvironment}
             snapshot={health.snapshot}
+            fleetEntries={health.fleetEntries}
             alerts={health.alerts}
             activeAlerts={health.activeAlerts}
             alertToast={health.alertToast}

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ALL_APPLICATIONS, isAllApplications, uniqueEnvironments } from '../constants/healthTargets.js';
+import { fleetTargets, mergeFleetApm } from '../lib/mergeFleetApm.js';
 import * as healthService from '../services/healthService.js';
 
 const POLL_INTERVAL_MS = 3000;
@@ -36,20 +38,32 @@ function writeStored(key, value) {
  * @param {string} preferredApp
  * @param {string} preferredEnv
  */
+function pickEnvironment(envs, preferredEnv, defaultEnvironment) {
+  return (
+    envs.find((item) => item.id === preferredEnv)
+    || envs.find((item) => item.id === defaultEnvironment)
+    || envs.find((item) => item.id === 'local')
+    || envs[0]
+  );
+}
+
 function pickSelection(catalog, preferredApp, preferredEnv) {
   const apps = catalog?.applications ?? [];
   if (!apps.length) {
     return { application: '', environment: '' };
   }
+  if (isAllApplications(preferredApp)) {
+    const env = pickEnvironment(uniqueEnvironments(apps), preferredEnv, catalog.defaultEnvironment);
+    return {
+      application: ALL_APPLICATIONS,
+      environment: env?.id ?? '',
+    };
+  }
   const app =
     apps.find((item) => item.id === preferredApp)
     || apps.find((item) => item.id === catalog.defaultApplication)
     || apps[0];
-  const envs = app.environments ?? [];
-  const env =
-    envs.find((item) => item.id === preferredEnv)
-    || envs.find((item) => item.id === catalog.defaultEnvironment)
-    || envs[0];
+  const env = pickEnvironment(app.environments ?? [], preferredEnv, catalog.defaultEnvironment);
   return {
     application: app.id,
     environment: env?.id ?? '',
@@ -58,6 +72,9 @@ function pickSelection(catalog, preferredApp, preferredEnv) {
 
 function matchesTarget(data, application, environment) {
   if (!data) return false;
+  if (isAllApplications(application)) {
+    return isAllApplications(data.applicationId);
+  }
   if (data.applicationId && application && data.applicationId !== application) return false;
   if (data.environment && environment && data.environment !== environment) return false;
   return true;
@@ -96,6 +113,7 @@ export function useHealthCheck({ enabled = true } = {}) {
   const [environment, setEnvironment] = useState('');
   /** @type {[import('../services/healthService.js').ApmSnapshot | null, import('react').Dispatch<any>]} */
   const [snapshot, setSnapshot] = useState(null);
+  const [fleetEntries, setFleetEntries] = useState(/** @type {any[]} */ ([]));
   /** @type {[import('../services/healthService.js').ApmMetricsView | null, import('react').Dispatch<any>]} */
   const [metrics, setMetrics] = useState(null);
   /** @type {[import('../services/healthService.js').ApmAlertEvent[], import('react').Dispatch<any>]} */
@@ -123,6 +141,7 @@ export function useHealthCheck({ enabled = true } = {}) {
   const toastTimer = useRef(/** @type {ReturnType<typeof setTimeout> | null} */ (null));
   const applicationRef = useRef(application);
   const environmentRef = useRef(environment);
+  const catalogRef = useRef(catalog);
 
   useEffect(() => {
     mounted.current = true;
@@ -139,10 +158,12 @@ export function useHealthCheck({ enabled = true } = {}) {
   useEffect(() => {
     applicationRef.current = application;
     environmentRef.current = environment;
-  }, [application, environment]);
+    catalogRef.current = catalog;
+  }, [application, environment, catalog]);
 
   const resetLiveState = useCallback(() => {
     setSnapshot(null);
+    setFleetEntries([]);
     setMetrics(null);
     setAlerts([]);
     setActiveAlerts([]);
@@ -179,10 +200,12 @@ export function useHealthCheck({ enabled = true } = {}) {
     const nextApp = String(appId || '');
     setApplication(nextApp);
     writeStored(STORAGE_APP, nextApp);
-    const app = catalog?.applications?.find((item) => item.id === nextApp);
-    const envs = app?.environments ?? [];
+    const apps = catalog?.applications ?? [];
+    const envs = isAllApplications(nextApp)
+      ? uniqueEnvironments(apps)
+      : (apps.find((item) => item.id === nextApp)?.environments ?? []);
     setEnvironment((prev) => {
-      const nextEnv = envs.some((item) => item.id === prev) ? prev : (envs[0]?.id ?? '');
+      const nextEnv = pickEnvironment(envs, prev, catalog?.defaultEnvironment)?.id ?? '';
       writeStored(STORAGE_ENV, nextEnv);
       return nextEnv;
     });
@@ -312,6 +335,23 @@ export function useHealthCheck({ enabled = true } = {}) {
     if (!appId || !envId) return;
     setLoading(true);
     try {
+      if (isAllApplications(appId)) {
+        const targets = fleetTargets(catalogRef.current, envId);
+        const entries = await healthService.fetchFleetApm(targets);
+        if (!mounted.current) return;
+        if (appId !== applicationRef.current || envId !== environmentRef.current) return;
+        const merged = mergeFleetApm(entries, envId);
+        setFleetEntries(entries);
+        setSnapshot(merged.snapshot);
+        setMetrics(merged.snapshot);
+        setAlerts(merged.alerts);
+        setActiveAlerts(merged.activeAlerts);
+        setActiveAlertCount(merged.activeCount || countActiveFromSnapshot(merged.snapshot));
+        setMetricsTick((n) => n + 1);
+        setError(null);
+        setLoading(false);
+        return;
+      }
       const [snap, metricsView, alertsView] = await Promise.all([
         healthService.fetchApmSnapshot(appId, envId),
         healthService.fetchApmMetrics(appId, envId).catch(() => null),
@@ -319,6 +359,7 @@ export function useHealthCheck({ enabled = true } = {}) {
       ]);
       if (!mounted.current) return;
       if (appId !== applicationRef.current || envId !== environmentRef.current) return;
+      setFleetEntries([]);
       setSnapshot(snap);
       if (metricsView) setMetrics(metricsView);
       if (alertsView) {
@@ -341,15 +382,24 @@ export function useHealthCheck({ enabled = true } = {}) {
     }
   }, []);
 
-  const refreshStack = useCallback(async () => {
-    const appId = applicationRef.current;
+  const refreshStack = useCallback(async (overrideAppId) => {
+    const appId = String(overrideAppId || applicationRef.current || '');
     const envId = environmentRef.current;
     if (!appId || !envId) return;
     setStackLoading(true);
     try {
-      const data = await healthService.fetchApmStack(appId, envId);
-      if (mounted.current && appId === applicationRef.current && envId === environmentRef.current) {
-        setFullStacks(Array.isArray(data.threads) ? data.threads : []);
+      if (isAllApplications(appId)) {
+        const targets = fleetTargets(catalogRef.current, envId);
+        const threads = await healthService.fetchFleetStacks(targets);
+        if (mounted.current && environmentRef.current === envId) {
+          setFullStacks(threads);
+        }
+      } else {
+        const target = fleetTargets(catalogRef.current, envId).find((item) => item.application === appId);
+        const data = await healthService.fetchApmStack(appId, target?.env || envId);
+        if (mounted.current && environmentRef.current === envId) {
+          setFullStacks(Array.isArray(data.threads) ? data.threads : []);
+        }
       }
     } catch (e) {
       if (mounted.current) setError(formatError(e));
@@ -371,6 +421,34 @@ export function useHealthCheck({ enabled = true } = {}) {
       setAlertsLive(false);
       setMode('idle');
       return undefined;
+    }
+
+    if (isAllApplications(application)) {
+      if (!(catalog?.applications?.length)) {
+        setLive(false);
+        setMetricsLive(false);
+        setAlertsLive(false);
+        setMode('idle');
+        return undefined;
+      }
+      let stopped = false;
+      let pollTimer = /** @type {ReturnType<typeof setInterval> | null} */ (null);
+      setMode('poll');
+      setLive(true);
+      setMetricsLive(true);
+      setAlertsLive(true);
+      refresh();
+      pollTimer = setInterval(() => {
+        if (!pausedRef.current && !stopped) refresh();
+      }, POLL_INTERVAL_MS);
+      return () => {
+        stopped = true;
+        if (pollTimer) clearInterval(pollTimer);
+        setLive(false);
+        setMetricsLive(false);
+        setAlertsLive(false);
+        setMode('idle');
+      };
     }
 
     setLoading(true);
@@ -482,7 +560,7 @@ export function useHealthCheck({ enabled = true } = {}) {
       setAlertsLive(false);
       setMode('idle');
     };
-  }, [enabled, application, environment, applySnapshot, applyMetrics, applyAlertsView, onAlertPush, refresh]);
+  }, [enabled, application, environment, catalog?.applications?.length, applySnapshot, applyMetrics, applyAlertsView, onAlertPush, refresh]);
 
   const dismissError = useCallback(() => setError(null), []);
 
@@ -493,6 +571,7 @@ export function useHealthCheck({ enabled = true } = {}) {
     selectApplication,
     selectEnvironment,
     snapshot,
+    fleetEntries,
     metrics,
     alerts,
     activeAlerts,

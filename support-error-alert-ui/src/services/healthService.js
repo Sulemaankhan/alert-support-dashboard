@@ -527,3 +527,34 @@ export async function fetchServiceHealth(env) {
   const res = await request(`/api/health/apm/services${targetQuery('', env)}`);
   return res.json();
 }
+
+/**
+ * Snapshot + alerts for every fleet target (one application / environment pair).
+ * @param {Array<{ application: string, applicationName?: string, env: string, envLabel?: string }>} targets
+ */
+export async function fetchFleetApm(targets) {
+  return Promise.all((targets ?? []).map(async (target) => {
+    const [snap, alerts] = await Promise.all([
+      fetchApmSnapshot(target.application, target.env).catch(() => null),
+      fetchApmAlerts(target.application, target.env).catch(() => null),
+    ]);
+    return { ...target, snap, alerts };
+  }));
+}
+
+/**
+ * Thread dumps for every fleet target, labeled by application.
+ * @param {Array<{ application: string, applicationName?: string, env: string }>} targets
+ */
+export async function fetchFleetStacks(targets) {
+  const rows = await Promise.all((targets ?? []).map(async (target) => {
+    const data = await fetchApmStack(target.application, target.env).catch(() => ({ threads: [] }));
+    return { ...target, threads: data.threads ?? [] };
+  }));
+  return rows.flatMap((row) => (
+    row.threads.map((thread) => ({
+      ...thread,
+      name: `${row.applicationName || row.application} · ${thread.name}`,
+    }))
+  ));
+}

@@ -22,8 +22,8 @@ export const SECTION = {
     emptyDetail: 'No email alert loaded yet. Search your inbox above, then use a message as the alert.',
   },
   HEALTH: {
-    title: 'HealthCheck',
+    title: 'Realtime APM',
     loadHint:
-      'Choose an application and environment, then watch live APM for that Actuator target.',
+      'Pick a target and watch throughput, latency, errors, and heap stream in live.',
   },
 };
